@@ -1,0 +1,45 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+ :root{--ink:#14171a;--muted:#5b6770;--line:#d8dee3;--accent:#0f7a5e;--bg:#fff}
+ *{box-sizing:border-box}body{font-family:-apple-system,Segoe UI,Inter,Arial,sans-serif;color:var(--ink);background:#eef1f3;margin:0;padding:32px}
+ .page{max-width:1180px;margin:0 auto;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:40px 48px 48px;box-shadow:0 6px 28px rgba(0,0,0,.07)}
+ h1{font-size:24px;margin:0 0 4px;letter-spacing:-.02em}.sub{color:var(--muted);font-size:14px;margin:0 0 28px}
+ .diagram{border:1px solid var(--line);border-radius:10px;padding:18px;background:#fafbfc;overflow-x:auto}
+ .legend{display:flex;flex-wrap:wrap;gap:14px 26px;margin-top:18px;font-size:12.5px;color:var(--muted)}.legend b{color:var(--ink)}
+ .foot{margin-top:34px;padding-top:18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted);display:flex;justify-content:space-between}
+ .pill{display:inline-block;background:#e1f2ec;color:#0f7a5e;font-weight:600;font-size:11px;padding:3px 9px;border-radius:999px;vertical-align:middle}
+</style></head><body><div class="page">
+ <h1>FrontDesk — Booking Sequence <span class="pill">SEQUENCE</span></h1>
+ <p class="sub">One inbound call, end to end · the Telegram confirmation is a real message</p>
+ <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as Caller
+  participant R as AI Receptionist
+  participant B as Booking core
+  participant T as Telegram
+  participant S as SMS (Twilio)
+  C->>R: "I'd like to book"
+  loop slot-fill
+    R->>C: ask name / service / phone / time
+    C->>R: answers
+  end
+  R->>C: offers concrete slots
+  C->>R: picks a slot
+  R->>B: create booking
+  B->>T: send confirmation (real, to /start-ed chat)
+  B->>S: send SMS confirmation
+  B->>B: log booking
+  R->>C: "Booked — confirmation sent"
+  Note over B,T: no token → dry-run, booking still completes
+ </pre></div>
+ <div class="legend">
+  <span><b>Reliable</b> — deterministic slot-fill always completes; optional Anthropic only smooths phrasing</span>
+  <span><b>Real Telegram</b> — the confirmation is an actual message to the chat that started the bot</span>
+  <span><b>Same path for outbound</b> — Scope 2 lead → auto-call books through this identical confirm/log flow</span>
+ </div>
+ <div class="foot"><span>FrontDesk — reference build for the receptionist brief</span><span>Waseem Iftikhar — AI / Backend Engineer</span></div>
+</div>
+<script>mermaid.initialize({startOnLoad:true,theme:"base",themeVariables:{fontFamily:"Inter, Arial, sans-serif",fontSize:"14px",primaryColor:"#fff",primaryBorderColor:"#c4ccd2",lineColor:"#8a949c",primaryTextColor:"#14171a"}});</script>
+</body></html>
