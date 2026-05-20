@@ -6,3 +6,14 @@ __pycache__/
 .vercel
 .DS_Store
 PROPOSAL.md
+docs/_brief.html
+docs/brief.pdf
+docs/brief.png
+docs/_solution.html
+docs/solution.pdf
+docs/solution.png
+docs/_prep.html
+docs/prep.pdf
+docs/_checklist.html
+docs/checklist.pdf
+docs/checklist.png

@@ -1,50 +1,93 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Voice Receptionist & Booking — System Overview</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
- :root{--ink:#14171a;--muted:#5b6770;--line:#d8dee3;--accent:#0f7a5e;--bg:#fff}
- *{box-sizing:border-box}body{font-family:-apple-system,Segoe UI,Inter,Arial,sans-serif;color:var(--ink);background:#eef1f3;margin:0;padding:32px}
- .page{max-width:1180px;margin:0 auto;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:40px 48px 48px;box-shadow:0 6px 28px rgba(0,0,0,.07)}
- h1{font-size:24px;margin:0 0 4px;letter-spacing:-.02em}.sub{color:var(--muted);font-size:14px;margin:0 0 28px}
- h2{font-size:15px;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin:34px 0 10px}
- .diagram{border:1px solid var(--line);border-radius:10px;padding:18px;background:#fafbfc;overflow-x:auto}
- .legend{display:flex;flex-wrap:wrap;gap:14px 26px;margin-top:18px;font-size:12.5px;color:var(--muted)}.legend b{color:var(--ink)}
- .foot{margin-top:34px;padding-top:18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted);display:flex;justify-content:space-between}
- .pill{display:inline-block;background:#e1f2ec;color:#0f7a5e;font-weight:600;font-size:11px;padding:3px 9px;border-radius:999px;vertical-align:middle}
-</style></head><body><div class="page">
- <h1>FrontDesk — AI Voice Receptionist &amp; Booking <span class="pill">SYSTEM OVERVIEW</span></h1>
- <p class="sub">Inbound call &amp; outbound lead → booked → confirmed on Telegram + SMS → logged</p>
+  :root { --ink:#14171a; --muted:#5b6770; --line:#d8dee3; --accent:#14a800; --bg:#ffffff; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Arial,sans-serif;
+         color:var(--ink); background:#eef1f3; margin:0; padding:32px; }
+  .page { max-width:1180px; margin:0 auto; background:var(--bg);
+           border:1px solid var(--line); border-radius:14px; padding:40px 48px 48px;
+           box-shadow:0 6px 28px rgba(0,0,0,.07); }
+  h1 { font-size:24px; margin:0 0 4px; letter-spacing:-.02em; }
+  .sub { color:var(--muted); font-size:14px; margin:0 0 28px; }
+  h2 { font-size:15px; text-transform:uppercase; letter-spacing:.08em;
+       color:var(--accent); margin:30px 0 10px; }
+  .diagram { border:1px solid var(--line); border-radius:10px; padding:18px;
+             background:#fafbfc; overflow-x:auto; }
+  .legend { display:flex; flex-wrap:wrap; gap:14px 26px; margin-top:18px;
+            font-size:12.5px; color:var(--muted); }
+  .legend b { color:var(--ink); }
+  .foot { margin-top:30px; padding-top:18px; border-top:1px solid var(--line);
+          font-size:12.5px; color:var(--muted); display:flex; justify-content:space-between; }
+  .pill { display:inline-block; background:#eafae6; color:#0f7a00; font-weight:600;
+          font-size:11px; padding:3px 9px; border-radius:999px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>AI Voice Receptionist &amp; Booking System <span class="pill">SYSTEM OVERVIEW</span></h1>
+  <p class="sub">Inbound calls + outbound new-lead auto-calls &middot; one connected system &middot; MVP, not a SaaS</p>
 
- <h2>Scope 1 — Inbound: call → booked → confirmed → logged</h2>
- <div class="diagram"><pre class="mermaid">
-flowchart LR
-  C([Caller]) -->|Twilio voice| VA{{AI Receptionist}}
-  VA -->|slot-fill: name, service,<br/>phone, time| BK[[Books appointment]]
-  BK --> TG[(Telegram confirmation<br/>real, to owner chat)]
-  BK --> SMS[/SMS confirmation<br/>Twilio/]
-  BK --> LOG[(Logged: bookings)]
-  classDef k fill:#e1f2ec,stroke:#0f7a5e,color:#0a4d3c;
-  classDef s fill:#eef4ff,stroke:#3b6fd4,color:#1f3d80;
-  class VA,BK k; class TG,LOG s;
- </pre></div>
+  <h2>Scope 1 &mdash; Inbound: Call &rarr; Booked &rarr; Confirmed &rarr; Logged</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  C([Customer calls]) --> TW[Twilio Voice]
+  TW --> VA{{"AI Voice Agent · natural conversation"}}
+  VA -->|collects| Q["Name · phone · address · ZIP<br/>appliance type / brand / model<br/>problem · urgency · time window · access notes"]
+  Q --> SA{"ZIP in service area?"}
+  SA -->|no| ESC["Escalate to admin"]
+  SA -->|yes| FEE["Reads $89 diagnostic-fee script verbatim"]
+  FEE --> SCH["Offers appointment window<br/>9–12 · 10–12 · 12–2 · 2–4 · 4–6"]
+  SCH --> BK[["Books appointment"]]
+  BK --> SMS[/"SMS to customer · company · window · address · $89 note · 30-min heads-up"/]
+  BK --> NOTE["Full booking + call summary<br/>to private team group-chat"]
+  BK --> SHEET[("Google Sheets · admin backup")]
+  VA -.->|7 escalation triggers| ESC
+  classDef ai fill:#eafae6,stroke:#14a800,color:#0f5c00;
+  classDef store fill:#eef4ff,stroke:#3b6fd4,color:#1f3d80;
+  classDef warn fill:#fff3e0,stroke:#e08a1e,color:#7a4a06;
+  class VA,BK ai;
+  class SHEET,NOTE store;
+  class ESC warn;
+    </pre>
+  </div>
 
- <h2>Scope 2 — Outbound: new lead → auto-call → smart retries</h2>
- <div class="diagram"><pre class="mermaid">
-flowchart LR
-  L([New lead]) --> TR[Trigger outbound call]
-  TR --> OC{{AI outbound call}}
-  OC --> ANS{Answered?}
-  ANS -->|yes| QB[Qualify + book] --> SAME[[Same Telegram + SMS + log path]]
-  ANS -->|no| R[Retry ×3 over ~3 days] --> CL[Mark closed]
-  classDef k fill:#e1f2ec,stroke:#0f7a5e,color:#0a4d3c;
-  class OC,QB k;
- </pre></div>
+  <h2>Scope 2 &mdash; Outbound: New Lead &rarr; Auto-Call &rarr; Smart Retries</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  L([New lead arrives from your lead source]) --> TR["Trigger within minutes"]
+  TR --> OC{{"AI outbound call"}}
+  OC --> ANS{"Answered?"}
+  ANS -->|yes| QB["AI qualifies + books through the same flow"]
+  QB --> SAME[["Same SMS + group-chat + Sheets path as inbound"]]
+  ANS -->|no| R1["Retry 1"] --> R2["Retry 2"] --> R3["Retry 3<br/>over ~3 days · configurable"] --> CL["Mark closed if still no answer"]
+  OC -.->|"after every attempt"| NOT["Internal alert · outcome answered / no-answer / voicemail<br/>+ short call summary"]
+  classDef ai fill:#eafae6,stroke:#14a800,color:#0f5c00;
+  classDef store fill:#eef4ff,stroke:#3b6fd4,color:#1f3d80;
+  class OC,QB ai;
+  class NOT store;
+    </pre>
+  </div>
 
- <div class="legend">
-  <span><b>Telegram is real</b> — tap Start on the bot, the booking confirmation lands in your chat (live proof of the integration)</span>
-  <span><b>Provider-abstracted</b> — Telegram / SMS / store behind interfaces; Twilio + Vapi + Calendar are config in production</span>
-  <span><b>One connected core</b> — inbound and outbound share the same book → confirm → log path</span>
- </div>
- <div class="foot"><span>FrontDesk — reference build for the receptionist brief</span><span>Waseem Iftikhar — AI / Backend Engineer</span></div>
+  <div class="legend">
+    <span><b>One connected system</b> &mdash; inbound and outbound share the same booking, SMS, group-chat &amp; logging core</span>
+    <span><b>Escalation</b> &mdash; live-person request, upset/confused, exact price, warranty/insurance, cancel/reschedule, can't understand, out of area</span>
+    <span><b>You stay in control</b> &mdash; voice platform &amp; phone usage billed to your own account; you set retry cadence and service area</span>
+  </div>
+
+  <div class="foot">
+    <span>$1,100 fixed &middot; ~2 weeks &middot; paid per milestone &mdash; you verify each piece before release.</span>
+    <span>System overview &mdash; prepared for Maya</span>
+  </div>
 </div>
-<script>mermaid.initialize({startOnLoad:true,theme:"base",themeVariables:{fontFamily:"Inter, Arial, sans-serif",fontSize:"14px",primaryColor:"#fff",primaryBorderColor:"#c4ccd2",lineColor:"#8a949c",primaryTextColor:"#14171a"}});</script>
-</body></html>
+<script>mermaid.initialize({ startOnLoad:true, theme:"base",
+  themeVariables:{ fontFamily:"Inter, -apple-system, Arial, sans-serif", fontSize:"14px",
+  primaryColor:"#ffffff", primaryBorderColor:"#c4ccd2", lineColor:"#8a949c", primaryTextColor:"#14171a" }});</script>
+</body>
+</html>

@@ -35,8 +35,9 @@ def handle_update(update: dict) -> None:
     if text.startswith("/start"):
         send_to(
             int(chat_id),
-            "You're connected to FrontDesk. Run a booking in the web demo "
-            "and the confirmation will arrive right here.",
+            "You're connected to Safro Solutions Appliance Repair — AI "
+            "receptionist demo. Run a booking in the web demo and the "
+            "confirmation will arrive right here.",
         )
 
 
