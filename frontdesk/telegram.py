@@ -32,12 +32,15 @@ def handle_update(update: dict) -> None:
         return
     register_chat(int(chat_id))
     text = (msg.get("text") or "").strip()
-    if text.startswith("/start"):
+    if text.startswith("/start") or text.startswith("/id"):
         send_to(
             int(chat_id),
-            "You're connected to Safro Solutions Appliance Repair — AI "
-            "receptionist demo. Run a booking in the web demo and the "
-            "confirmation will arrive right here.",
+            "You're connected to Safro Solutions Appliance Repair — AI dispatcher demo.\n\n"
+            f"Your chat ID: {chat_id}\n\n"
+            "To receive ALL booking & lead alerts reliably (even after server cold starts), "
+            "paste this chat ID into Vercel:\n"
+            f"  vercel env add TELEGRAM_OWNER_CHAT_ID production   # value: {chat_id}\n"
+            "Then redeploy. Otherwise alerts work but only intermittently.",
         )
 
 

@@ -351,6 +351,7 @@ a{color:var(--blue);text-decoration:none}
 let CFG = null;
 let CURRENT_CALL = null;
 let CURRENT_LEAD = null;
+let CURRENT_TRANSCRIPT = [];   // ["Agent: …", "Customer: …"] — sent whole on call-end
 let vapi = null;
 
 async function boot(){
@@ -536,6 +537,7 @@ async function startVapiCall(start){
   document.getElementById("liveStat").innerHTML = '<span class="rd"></span> connecting…';
   const tr = document.getElementById("transcript");
   tr.innerHTML = "";
+  CURRENT_TRANSCRIPT = [];
 
   if (!start.vapi_configured || !start.public_key){
     addLine("system",
@@ -597,7 +599,11 @@ function wireVapi(){
   vapi.on("call-end", () => {
     document.getElementById("liveStat").innerHTML = '<span class="rd"></span> parsing transcript…';
     addLine("system", "Call ended. Parsing transcript for booking…");
-    postEvent({kind:"ended", outcome:"answered"}).then(j => {
+    // Ship the FULL transcript in one shot — Vercel serverless instances
+    // don't share in-memory state, so per-chunk posts may not survive to
+    // the call-end handler. Belt-and-braces: send the whole text here.
+    const fullTranscript = CURRENT_TRANSCRIPT.join("\n");
+    postEvent({kind:"ended", outcome:"answered", transcript: fullTranscript}).then(j => {
       handleFinalize(j);
       loadBookings(); refreshAgents(); loadSheet();
     });
@@ -605,7 +611,9 @@ function wireVapi(){
   vapi.on("message", (msg) => {
     if (msg.type === "transcript" && msg.transcriptType === "final"){
       const role = msg.role === "user" ? "you" : "bot";
-      addLine(role, msg.transcript, role === "bot" ? CURRENT_CALL.agent.name : "Customer");
+      const speaker = role === "bot" ? (CURRENT_CALL?.agent?.name || "Agent") : "Customer";
+      addLine(role, msg.transcript, speaker);
+      CURRENT_TRANSCRIPT.push(`${speaker}: ${msg.transcript}`);
       postEvent({kind:"transcript", role: msg.role, text: msg.transcript});
     }
   });
@@ -651,7 +659,8 @@ function endCallManual(){
   document.getElementById("liveStat").innerHTML = '<span class="rd"></span> parsing transcript…';
   addLine("system", "Call ended manually. Parsing transcript for booking…");
   if (CURRENT_CALL){
-    postEvent({kind:"ended", outcome:"answered"}).then(j => {
+    const fullTranscript = CURRENT_TRANSCRIPT.join("\n");
+    postEvent({kind:"ended", outcome:"answered", transcript: fullTranscript}).then(j => {
       handleFinalize(j);
       loadBookings(); refreshAgents(); loadSheet();
     });
