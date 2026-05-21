@@ -1,393 +1,375 @@
-"""The single-page demo console.
+"""Ops dashboard HTML — the demo Maya asked for on 5/20.
 
-Kept as one self-contained string so Vercel can serve it without
-worrying about static assets or build steps. Tokens like __COMPANY__,
-__PHONE__, __BOT__, __FEE__ are substituted by main.home().
+Lead arrives (Yelp / Thumbtack) → router visibly runs all gates with
+per-step timing → < 2s budget visualized → Vapi web-call auto-places
+with the chosen agent → live transcript streams → booking lands in
+the (mock) Google Sheet + Telegram alert fires.
+
+Single self-contained string so Vercel can serve it without static
+build steps. Tokens (__COMPANY__, __FEE__, __PHONE__, __BOT__) are
+substituted by main.home().
 """
 
-INDEX_HTML = r"""<!doctype html>
+OPS_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>__COMPANY__ — AI Receptionist & Booking</title>
+<title>__COMPANY__ — AI Dispatcher</title>
 <style>
 :root{
-  --bg:#0a0e16; --card:#121a27; --card2:#172132; --line:#243049;
+  --bg:#070b13; --bg2:#0c1320; --card:#0f1828; --card2:#15203a;
+  --line:#22304a; --line2:#2f4264;
   --ink:#e9eef9; --mut:#8a99b3; --mut2:#5a6a85;
-  --green:#1fb888; --green-d:#0f7a5e;
-  --blue:#4a9eff; --blue-d:#1f5fb8;
-  --amber:#e8a23a; --red:#e25555;
+  --green:#1fb888; --green-d:#0e6e54;
+  --teal:#2bd0bd;
+  --blue:#5ba8ff; --blue-d:#2056a8;
+  --amber:#e8a23a; --amber-d:#7a5413;
+  --red:#e25555; --red-d:#5b2424;
+  --purple:#a07cff;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{background:var(--bg);color:var(--ink);
+html,body{background:radial-gradient(1200px 600px at 10% -10%,#11244a55,transparent),var(--bg);
+  color:var(--ink);min-height:100vh;
   font-family:-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;
-  min-height:100vh}
+  font-size:14px}
 a{color:var(--blue);text-decoration:none}
-.wrap{max-width:1240px;margin:0 auto;padding:18px 22px 60px}
+
+.wrap{max-width:1380px;margin:0 auto;padding:18px 22px 80px}
 
 /* ── HEADER ─────────────────────────────────────────────────────── */
 .head{display:flex;align-items:center;justify-content:space-between;
-  gap:14px;margin-bottom:18px;flex-wrap:wrap}
+  gap:14px;margin-bottom:14px;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:12px}
-.logo{width:42px;height:42px;border-radius:11px;
-  background:linear-gradient(135deg,var(--green),var(--blue));
+.logo{width:44px;height:44px;border-radius:12px;
+  background:linear-gradient(135deg,#22d3a5,#5ba8ff);
   display:flex;align-items:center;justify-content:center;
-  font-weight:800;color:#fff;font-size:18px;letter-spacing:.5px}
+  font-weight:800;color:#04121a;font-size:20px;letter-spacing:.4px}
 .brand h1{font-size:17px;letter-spacing:.2px}
-.brand .sub{font-size:12px;color:var(--mut);margin-top:2px}
+.brand .sub{font-size:12px;color:var(--mut);margin-top:3px}
 .badges{display:flex;gap:8px;flex-wrap:wrap}
 .badge{font-size:11px;padding:5px 9px;border-radius:999px;
-  background:#15202e;border:1px solid var(--line);color:var(--mut)}
-.badge.live{color:var(--green);border-color:#1d5443;background:#0f2a22}
-.badge.dry{color:var(--amber);border-color:#4a3a18;background:#251c0c}
+  background:#162033;border:1px solid var(--line);color:var(--mut);cursor:default}
+.badge.live{color:#7af5cb;border-color:#235e4a;background:#0e2a22}
+.badge.dry{color:#f5cf7a;border-color:#5e4a23;background:#241c0e}
 
-/* ── AGENT TOGGLE ───────────────────────────────────────────────── */
-.agents{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
-.agent{background:var(--card);border:1px solid var(--line);
-  border-radius:14px;padding:14px 16px;cursor:pointer;
-  display:flex;align-items:center;gap:14px;transition:all .15s ease}
-.agent:hover{border-color:#2f4366}
-.agent.on{border-color:var(--green);box-shadow:0 0 0 2px #1fb88822}
-.avatar{width:44px;height:44px;border-radius:50%;
+.tabs{display:flex;gap:8px;margin-bottom:18px}
+.tab{padding:8px 14px;border:1px solid var(--line);border-radius:10px;
+  background:#101a2c;color:#bcc8de;font-size:12.5px;font-weight:500;
+  cursor:pointer;text-decoration:none}
+.tab.on{background:linear-gradient(135deg,#1e3358,#11244a);border-color:#3d5e9c;color:#fff}
+.tab:hover{border-color:var(--line2)}
+
+/* ── AGENT FLOOR ────────────────────────────────────────────────── */
+.floor{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px}
+@media (max-width:880px){.floor{grid-template-columns:1fr}}
+.agent{background:linear-gradient(135deg,#101a2c,#0c1424);
+  border:1px solid var(--line);border-radius:14px;padding:13px 15px;
+  display:flex;align-items:center;gap:13px;
+  position:relative;overflow:hidden}
+.agent::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--mut2)}
+.agent.idle::before{background:var(--green)}
+.agent.busy::before{background:var(--amber);box-shadow:0 0 14px var(--amber)}
+.agent.offline::before{background:var(--mut2)}
+.av{width:40px;height:40px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;
-  font-weight:700;font-size:18px;color:#fff;flex:none}
-.avatar.amanda{background:linear-gradient(135deg,#1fb888,#1a857c)}
-.avatar.tony{background:linear-gradient(135deg,#4a9eff,#3a4dbb)}
-.agent .who{font-weight:600;font-size:14px}
-.agent .why{font-size:11.5px;color:var(--mut);margin-top:2px;line-height:1.4}
-.dot{display:inline-block;width:7px;height:7px;border-radius:50%;
-  background:var(--mut);margin-right:6px;vertical-align:middle}
-.agent.on .dot{background:var(--green);
-  box-shadow:0 0 0 3px #1fb88830;animation:pulse 1.4s ease-out infinite}
-@keyframes pulse{
-  0%{box-shadow:0 0 0 0 #1fb88860}
-  100%{box-shadow:0 0 0 8px #1fb88800}
-}
+  font-weight:700;font-size:16px;color:#fff;flex:none}
+.av.amanda{background:linear-gradient(135deg,#1fb888,#0e6e54)}
+.av.tony{background:linear-gradient(135deg,#5ba8ff,#2056a8)}
+.av.sofia{background:linear-gradient(135deg,#a07cff,#6244a8)}
+.agent .nm{font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:8px}
+.agent .nm .dot{width:7px;height:7px;border-radius:50%;background:var(--mut)}
+.agent.idle .nm .dot{background:var(--green);
+  box-shadow:0 0 0 3px #1fb88830;animation:pulse 1.6s ease-out infinite}
+.agent.busy .nm .dot{background:var(--amber);
+  box-shadow:0 0 0 3px #e8a23a30;animation:pulse 1s ease-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 currentColor}
+  100%{box-shadow:0 0 0 8px transparent}}
+.agent .why{font-size:11px;color:var(--mut);margin-top:3px;line-height:1.45}
+.agent .stat{margin-left:auto;text-align:right}
+.agent .st{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut2)}
+.agent .sv{font-size:12.5px;font-weight:600;color:var(--ink)}
+.agent .lang{display:inline-block;font-size:9.5px;padding:1px 5px;border-radius:3px;
+  background:#15203a;color:#bcc8de;letter-spacing:.5px;margin-right:3px}
+
+/* ── LEAD SOURCE STRIP ──────────────────────────────────────────── */
+.fire{background:#0f1828;border:1px solid var(--line);border-radius:14px;
+  padding:13px 15px;margin-bottom:14px}
+.fire h3{font-size:11px;letter-spacing:.7px;text-transform:uppercase;
+  color:#bcc8de;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.fire h3 .hint{font-weight:400;color:var(--mut);text-transform:none;letter-spacing:0;font-size:11px;margin-left:auto}
+.fire-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+@media (max-width:880px){.fire-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:600px){.fire-grid{grid-template-columns:1fr}}
+.scn{background:#0a1322;border:1px solid var(--line);border-radius:10px;
+  padding:10px 12px;cursor:pointer;text-align:left;color:var(--ink);
+  display:flex;flex-direction:column;gap:4px;transition:all .15s ease;
+  position:relative;overflow:hidden}
+.scn:hover{border-color:var(--green);background:#0e1d33}
+.scn:disabled{opacity:.4;cursor:not-allowed}
+.scn .tag{position:absolute;top:8px;right:8px;font-size:9px;padding:2px 6px;
+  border-radius:4px;letter-spacing:.5px;text-transform:uppercase;font-weight:600}
+.scn .tag.booking{background:#0f2a22;color:var(--green)}
+.scn .tag.spanish{background:#1c1a3b;color:var(--purple)}
+.scn .tag.rollover{background:#231c0c;color:var(--amber)}
+.scn .tag.queued{background:#162638;color:var(--blue)}
+.scn .tag.rejected{background:#2a1414;color:var(--red)}
+.scn .tag.text{background:#1a1a2c;color:#9cb3da}
+.scn .label{font-size:12.5px;font-weight:600;padding-right:50px;line-height:1.4}
+.scn .summary{font-size:11px;color:var(--mut);line-height:1.45}
 
 /* ── MAIN GRID ──────────────────────────────────────────────────── */
-.grid{display:grid;grid-template-columns:1fr 360px;gap:16px}
-@media (max-width:980px){.grid{grid-template-columns:1fr}}
+.main{display:grid;grid-template-columns:1.45fr 1fr;gap:14px}
+@media (max-width:1080px){.main{grid-template-columns:1fr}}
 
-/* ── CALL PANEL ─────────────────────────────────────────────────── */
-.call{background:var(--card);border:1px solid var(--line);
-  border-radius:16px;overflow:hidden;display:flex;flex-direction:column}
-.phbar{display:flex;align-items:center;gap:12px;padding:14px 18px;
-  background:linear-gradient(90deg,#142435,#0d1828);border-bottom:1px solid var(--line)}
-.phbar .icon{width:34px;height:34px;border-radius:50%;
-  background:#0f2a22;border:1px solid #1d5443;color:var(--green);
-  display:flex;align-items:center;justify-content:center;font-size:16px}
-.phbar.ring .icon{animation:ring 1s ease-in-out infinite;
-  background:#251c0c;border-color:#4a3a18;color:var(--amber)}
-.phbar.active .icon{background:#0f2a22;color:var(--green)}
-@keyframes ring{
-  0%,100%{transform:rotate(0)}
-  20%{transform:rotate(-12deg)}
-  40%{transform:rotate(10deg)}
-  60%{transform:rotate(-8deg)}
-  80%{transform:rotate(6deg)}
-}
-.phbar .lbl{font-weight:600;font-size:14px}
-.phbar .sublbl{font-size:12px;color:var(--mut);margin-top:2px}
-.phbar .right{margin-left:auto;display:flex;align-items:center;gap:8px}
-.status{font-size:11px;padding:5px 10px;border-radius:999px;
-  background:#15202e;border:1px solid var(--line);color:var(--mut);
-  letter-spacing:.4px;text-transform:uppercase}
-.status.active{color:var(--green);border-color:#1d5443;background:#0f2a22}
-.status.ring{color:var(--amber);border-color:#4a3a18;background:#251c0c}
-.status.ended{color:var(--mut);background:#1a1f2a}
-.status.esc{color:var(--red);border-color:#5b2a2a;background:#2a1414}
+.panel{background:#0f1828;border:1px solid var(--line);border-radius:14px;
+  overflow:hidden;margin-bottom:14px}
+.panel h3{font-size:11px;letter-spacing:.7px;text-transform:uppercase;
+  color:#bcc8de;padding:12px 16px;background:#0b1424;
+  border-bottom:1px solid var(--line);font-weight:600;
+  display:flex;align-items:center;gap:9px}
+.panel h3 .meta{margin-left:auto;font-weight:400;color:var(--mut);letter-spacing:0;text-transform:none;font-size:11.5px}
+.panel .body{padding:14px 16px}
+.panel.empty .body{color:var(--mut);font-size:12px;padding:18px 16px}
 
-/* escalation banner */
-.esc-banner{display:none;background:#2a1414;border-left:3px solid var(--red);
-  color:#ffb8b8;padding:10px 16px;font-size:13px}
-.esc-banner.on{display:block}
-.esc-banner b{color:#ffd9d9}
+/* ── ROUTING VIZ ────────────────────────────────────────────────── */
+.lead-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.lead-head .src{background:#16243d;color:var(--blue);font-size:10px;letter-spacing:.5px;
+  text-transform:uppercase;padding:3px 7px;border-radius:4px;font-weight:600}
+.lead-head .nm{font-weight:600;font-size:14px}
+.lead-head .why{color:var(--mut);font-size:12.5px}
+.lead-head .lang{font-size:10px;background:#1c1a3b;color:var(--purple);padding:2px 6px;border-radius:3px;letter-spacing:.5px}
 
-/* transcript */
-.chat{flex:1;min-height:360px;max-height:440px;overflow-y:auto;
-  padding:18px;display:flex;flex-direction:column;gap:8px;background:#0c1320}
-.msg{max-width:78%;padding:10px 13px;border-radius:13px;
-  font-size:14px;line-height:1.5;animation:slide .25s ease-out}
-@keyframes slide{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
-.msg.you{align-self:flex-end;background:#0e3e2f;color:#d6f1e5;
-  border-bottom-right-radius:4px}
-.msg.agent{align-self:flex-start;background:#1a2333;
-  border-bottom-left-radius:4px}
-.role{font-size:10.5px;color:var(--mut2);margin:6px 4px 0;letter-spacing:.4px}
-.you+.role,.role.you{text-align:right}
-.typing{align-self:flex-start;background:#1a2333;padding:11px 14px;
-  border-radius:13px;border-bottom-left-radius:4px;display:none}
-.typing.on{display:flex;gap:4px}
-.typing span{width:6px;height:6px;border-radius:50%;background:var(--mut);
-  animation:bounce 1.2s ease-in-out infinite}
-.typing span:nth-child(2){animation-delay:.15s}
-.typing span:nth-child(3){animation-delay:.3s}
-@keyframes bounce{0%,80%,100%{opacity:.3;transform:translateY(0)}
-  40%{opacity:1;transform:translateY(-4px)}}
+.budget{background:#0a1322;border:1px solid var(--line);border-radius:10px;
+  padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:14px}
+.budget .lbl{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
+.budget .bar{flex:1;background:#0a1626;border:1px solid var(--line);height:8px;border-radius:4px;overflow:hidden;position:relative}
+.budget .fill{height:100%;background:linear-gradient(90deg,#22d3a5,#5ba8ff);
+  width:0;transition:width .3s ease-out}
+.budget .fill.over{background:linear-gradient(90deg,#e8a23a,#e25555)}
+.budget .now{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;color:#fff;min-width:80px;text-align:right}
+.budget .max{font-size:11px;color:var(--mut);min-width:64px}
+.budget.hit .now{color:var(--green)}
+.budget.miss .now{color:var(--red)}
 
-/* booking confirmation card inside chat */
-.confirm{align-self:stretch;background:linear-gradient(135deg,#0f2a22,#11362a);
-  border:1px solid #1d5443;border-radius:12px;padding:14px 16px;
-  display:flex;gap:14px;align-items:flex-start;margin-top:4px}
-.confirm .ck{font-size:22px;color:var(--green);line-height:1}
-.confirm b{font-size:13px;display:block;margin-bottom:6px}
-.confirm .meta{font-size:12px;color:#bdd9cc;line-height:1.55}
-.confirm .meta i{color:#7fb09b;font-style:normal;margin-right:4px}
+.steps{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.step{display:grid;grid-template-columns:60px 22px 1fr auto;gap:10px;align-items:center;
+  padding:8px 10px;border-radius:8px;background:#0a1322;
+  border:1px solid #18243d;
+  opacity:0;transform:translateX(-6px);transition:all .25s ease}
+.step.show{opacity:1;transform:translateX(0)}
+.step.ok{border-color:#1d5443}
+.step.bad{border-color:#5b2a2a}
+.step .ms{font-variant-numeric:tabular-nums;color:var(--mut);font-size:11.5px;text-align:right}
+.step .ic{width:18px;height:18px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;flex:none}
+.step.ok .ic{background:#0f2a22;color:var(--green);border:1px solid #1d5443}
+.step.ok .ic::after{content:"✓"}
+.step.bad .ic{background:#2a1414;color:var(--red);border:1px solid #5b2a2a}
+.step.bad .ic::after{content:"✕"}
+.step .lbl{font-weight:600;font-size:13px}
+.step .det{font-size:11.5px;color:var(--mut);grid-column:3;}
 
-/* input bar */
-.bar{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);
-  background:#101723}
-.bar input{flex:1;background:#0a121d;border:1px solid var(--line);
-  color:var(--ink);padding:11px 14px;border-radius:22px;font-size:14px;outline:none}
-.bar input:focus{border-color:var(--green)}
-.bar input:disabled{opacity:.45;cursor:not-allowed}
-.btn{background:var(--green);color:#fff;border:0;padding:0 18px;
-  border-radius:22px;cursor:pointer;font-weight:600;font-size:14px;
-  transition:transform .1s ease}
-.btn:hover{filter:brightness(1.07)}
+.outcome{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:10px;
+  background:#0a1322;border:1px solid var(--line);margin-bottom:10px}
+.outcome .ic{font-size:18px}
+.outcome.call{border-color:#1d5443;background:#0e2a22}
+.outcome.queue{border-color:#235e8c;background:#0d2238}
+.outcome.sms{border-color:#5e4a23;background:#241c0e}
+.outcome.reject{border-color:#5b2a2a;background:#2a1414}
+.outcome .txt{font-size:13px}
+.outcome .why{color:var(--mut);font-size:11.5px;margin-top:2px}
+.outcome .btn{margin-left:auto}
+
+.btn{background:linear-gradient(135deg,#22d3a5,#1fa884);color:#04121a;
+  border:0;padding:9px 16px;border-radius:8px;cursor:pointer;font-weight:700;
+  font-size:13px;letter-spacing:.2px;transition:transform .1s ease;display:inline-flex;align-items:center;gap:7px}
+.btn:hover{filter:brightness(1.08)}
 .btn:active{transform:translateY(1px)}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.btn.start{padding:11px 22px}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
 .btn.ghost{background:#1a2535;color:#cdd7e6;border:1px solid var(--line)}
 .btn.ghost:hover{background:#22324a}
+.btn.danger{background:#3a1a1a;color:#ffb8b8;border:1px solid #5b2a2a}
 
-/* idle screen (before call connects) */
-.idle{padding:46px 24px;display:flex;flex-direction:column;align-items:center;
-  gap:14px;background:#0c1320;flex:1;min-height:360px;text-align:center}
-.idle .ph{font-size:26px;font-weight:700;letter-spacing:.5px}
-.idle .ph .small{display:block;font-size:12px;color:var(--mut);
-  font-weight:400;margin-top:6px;letter-spacing:.2px}
-.idle .opening{max-width:520px;color:#bcc8de;font-size:13.5px;line-height:1.6;
-  background:#101a28;border:1px solid var(--line);border-radius:12px;padding:14px}
-.idle .opening b{color:#fff}
+/* ── LIVE CALL ──────────────────────────────────────────────────── */
+.live{background:#0f1828;border:1px solid var(--line);border-radius:14px;
+  overflow:hidden;margin-bottom:14px;display:flex;flex-direction:column}
+.live .head{display:flex;align-items:center;gap:12px;padding:12px 16px;
+  background:linear-gradient(90deg,#142a48,#0e1d33);
+  border-bottom:1px solid var(--line);margin:0;flex-wrap:nowrap}
+.live .head .av{width:36px;height:36px;border-radius:50%;font-size:14px}
+.live .head .nm{font-weight:600;font-size:14px}
+.live .head .stat{font-size:11px;color:var(--mut);margin-top:2px;display:flex;align-items:center;gap:6px}
+.live .head .stat .rd{width:6px;height:6px;border-radius:50%;background:var(--red);animation:rec 1.4s ease-in-out infinite}
+@keyframes rec{0%,100%{opacity:.3}50%{opacity:1}}
+.live .head .pull{margin-left:auto;display:flex;gap:8px}
 
-/* ── SIDE PANEL ─────────────────────────────────────────────────── */
-.side{display:flex;flex-direction:column;gap:14px;min-width:0}
-.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;
-  overflow:hidden}
-.panel h3{font-size:13px;padding:12px 16px;letter-spacing:.4px;
-  text-transform:uppercase;color:#bcc8de;background:#101a28;
-  border-bottom:1px solid var(--line);font-weight:600}
-.panel .body{padding:8px 0}
+.transcript{flex:1;min-height:240px;max-height:380px;overflow-y:auto;padding:14px 16px;
+  display:flex;flex-direction:column;gap:8px;background:#080f1c}
+.tline{max-width:78%;padding:9px 12px;border-radius:11px;font-size:13.5px;line-height:1.5}
+.tline.bot{align-self:flex-start;background:#152138;border-bottom-left-radius:3px}
+.tline.you{align-self:flex-end;background:#0e3e2f;color:#d6f1e5;border-bottom-right-radius:3px}
+.trole{font-size:10px;color:var(--mut2);letter-spacing:.4px;margin:6px 4px 0}
+.trole.you{align-self:flex-end}
+.tline.empty{align-self:center;color:var(--mut);background:transparent;font-style:italic;font-size:12px}
 
-/* live intake list */
-.field{display:flex;align-items:center;gap:10px;padding:9px 16px;
-  border-bottom:1px dashed #1c2638;font-size:13px}
-.field:last-child{border-bottom:0}
-.field .ic{width:18px;height:18px;border-radius:50%;flex:none;
-  background:#1a2333;border:1.5px solid var(--mut2);color:var(--mut);
-  display:flex;align-items:center;justify-content:center;font-size:11px}
-.field.done .ic{background:var(--green);border-color:var(--green);
-  color:#001a12}
-.field.done .ic::after{content:"✓"}
-.field .lbl{color:var(--mut);min-width:108px;flex:none}
-.field .val{color:var(--ink);font-weight:500;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;
-  font-size:12.5px}
-.field.done .lbl{color:#bcc8de}
-.field.flash{animation:flash 1s ease-out}
-@keyframes flash{0%{background:#1fb8881a}100%{background:transparent}}
+/* ── GOOGLE SHEET ───────────────────────────────────────────────── */
+.sheet{display:flex;flex-direction:column;gap:0}
+.sheet-row{display:grid;grid-template-columns:48px 1fr 1fr 22px;gap:8px;padding:8px 0;border-bottom:1px dashed #16223a;font-size:12px;align-items:center}
+.sheet-row.head{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);border-bottom:1px solid var(--line);padding-bottom:9px;font-weight:600}
+.sheet-row:last-child{border-bottom:0}
+.sheet-row .t{font-weight:600;color:#dde6f4}
+.sheet-row.free .t{color:var(--green)}
+.sheet-row.taken .t{color:var(--mut2)}
+.sheet-row .booked-ic{font-size:13px}
+.sheet-row.taken{opacity:.55}
+.sheet-row.held{background:#1c1a3b;border-radius:6px;padding:8px 6px}
+.sheet-row.held .booked-ic{color:var(--purple)}
 
-/* scenario buttons */
-.scn{display:flex;flex-direction:column;gap:2px;padding:6px 0}
-.scn button{text-align:left;background:transparent;border:0;
-  color:#dde6f4;padding:10px 16px;font-size:13px;cursor:pointer;
-  display:flex;align-items:center;gap:10px;width:100%;
-  border-left:2px solid transparent;transition:all .12s ease}
-.scn button:hover{background:#15202e;border-left-color:var(--green)}
-.scn button:disabled{opacity:.4;cursor:not-allowed}
-.scn .ttag{font-size:9.5px;padding:2px 6px;border-radius:4px;
-  letter-spacing:.5px;text-transform:uppercase;font-weight:600;flex:none}
-.scn .ttag.booking{background:#0f2a22;color:var(--green)}
-.scn .ttag.objection{background:#251c0c;color:var(--amber)}
-.scn .ttag.escalate{background:#2a1414;color:var(--red)}
-.scn .ts{flex:1;min-width:0}
-.scn .tt{display:block;font-weight:500;line-height:1.35}
-.scn .td{display:block;font-size:11px;color:var(--mut);margin-top:2px;line-height:1.4}
+/* ── QUEUE ──────────────────────────────────────────────────────── */
+.queue-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px dashed #16223a;font-size:12.5px}
+.queue-row:last-child{border-bottom:0}
+.queue-row .ic{font-size:14px;flex:none}
+.queue-row .sum{flex:1;color:var(--ink)}
+.queue-row .fire{color:var(--amber);font-size:11.5px;font-variant-numeric:tabular-nums}
+.queue-row .reason{font-size:10.5px;color:var(--mut);background:#15203a;padding:1px 6px;border-radius:3px;letter-spacing:.3px;text-transform:uppercase}
 
-/* bookings list */
-.bk{font-size:12.5px;color:#cdd7e6;padding:11px 16px;
-  border-bottom:1px dashed #1c2638;line-height:1.55}
+/* ── BOOKINGS ───────────────────────────────────────────────────── */
+.bk{display:flex;flex-direction:column;gap:3px;padding:11px 0;border-bottom:1px dashed #16223a;font-size:12.5px;line-height:1.55}
 .bk:last-child{border-bottom:0}
-.bk b{color:#fff;font-size:13px}
-.bk .meta{color:var(--mut);font-size:11.5px;margin-top:3px}
-.bk .pill{display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;
-  background:#15202e;color:var(--mut);margin-right:6px;letter-spacing:.3px;
-  text-transform:uppercase}
+.bk b{font-size:13.5px;color:#fff}
+.bk .meta{color:var(--mut);font-size:11.5px}
+.bk .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.bk .pill{font-size:9.5px;padding:1px 6px;border-radius:3px;
+  background:#15203a;color:var(--mut);letter-spacing:.5px;text-transform:uppercase;font-weight:600}
 .bk .pill.in{background:#0f2a22;color:var(--green)}
 .bk .pill.out{background:#16243d;color:var(--blue)}
-.empty{padding:18px;color:var(--mut);font-size:12.5px;text-align:center}
 
-/* tg note */
-.tg-note{background:#0e1a26;border:1px solid #1a3b5a;border-left:3px solid var(--blue);
-  border-radius:10px;padding:11px 14px;font-size:12.5px;color:#bcd2e6;line-height:1.5;
-  margin-bottom:14px}
-.tg-note a{font-weight:600}
-
-/* outbound lead form */
-.lead{padding:14px 16px;display:flex;flex-direction:column;gap:8px}
-.lead label{font-size:11px;color:var(--mut);letter-spacing:.4px;
-  text-transform:uppercase}
-.lead input{background:#0a121d;border:1px solid var(--line);
-  color:var(--ink);padding:9px 11px;border-radius:8px;font-size:13px;outline:none}
-.lead input:focus{border-color:var(--blue)}
-.lead .row{display:grid;gap:8px}
+/* ── MISC ───────────────────────────────────────────────────────── */
+.lead-feed-empty{color:var(--mut);font-style:italic;font-size:12.5px;text-align:center;padding:30px 14px}
+.timestamp{color:var(--mut);font-size:11px;font-variant-numeric:tabular-nums}
+.muted{color:var(--mut)}
+.right{margin-left:auto}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <div class="head">
-    <div class="brand">
-      <div class="logo">S</div>
-      <div>
-        <h1>__COMPANY__ — AI Receptionist & Booking</h1>
-        <div class="sub">Demo · Twilio voice · SMS · Telegram · diagnostic-fee qualified</div>
+<div class="head">
+  <div class="brand">
+    <div class="logo">S</div>
+    <div>
+      <h1>__COMPANY__ — AI Dispatcher</h1>
+      <div class="sub">Sub-2-second lead-to-call · Yelp · Thumbtack · Vapi · Telegram</div>
+    </div>
+  </div>
+  <div class="badges" id="badges"></div>
+</div>
+
+<div class="tabs">
+  <a class="tab on">⚡ Live Operations</a>
+  <a class="tab" href="/console">🎙 Conversation Engine</a>
+  <span style="flex:1"></span>
+  <button class="tab" onclick="resetDemo()" style="background:#2a1414;border-color:#5b2a2a;color:#ffb8b8">↻ Reset demo</button>
+</div>
+
+<!-- AGENT FLOOR -->
+<div class="floor" id="agents"></div>
+
+<!-- LEAD SOURCE STRIP -->
+<div class="fire">
+  <h3>⚡ Fire a lead
+    <span class="hint">Each click simulates the real Yelp/Thumbtack webhook payload</span>
+  </h3>
+  <div class="fire-grid" id="leads"></div>
+</div>
+
+<!-- MAIN GRID -->
+<div class="main">
+
+  <div>
+    <!-- ROUTING VIZ -->
+    <div class="panel" id="routerPanel">
+      <h3>🧭 Routing pipeline <span class="meta" id="routerMeta">awaiting first lead…</span></h3>
+      <div class="body" id="routerBody">
+        <div class="lead-feed-empty">Click any lead above to fire a webhook into the dispatcher.</div>
       </div>
     </div>
-    <div class="badges" id="badges">
-      <span class="badge" id="ttsBadge" onclick="toggleTTS()" style="cursor:pointer" title="Toggle voice playback">🔊 voice · on</span>
-    </div>
-  </div>
 
-  <div class="tg-note">
-    📲 <b>Make the Telegram confirmation real for this demo:</b>
-    open <a href="https://t.me/__BOT__" target="_blank">t.me/__BOT__</a>,
-    tap <b>Start</b>, then finish a booking below — the confirmation lands
-    in your own Telegram. With no token configured it still dry-runs and
-    completes end-to-end.
-  </div>
-
-  <div class="agents" id="agents"></div>
-
-  <div class="grid">
-
-    <!-- ─── LEFT: call panel ─── -->
-    <div class="call" id="callPanel">
-      <div class="phbar" id="phbar">
-        <div class="icon">📞</div>
+    <!-- LIVE CALL -->
+    <div class="live" id="livePanel" style="display:none">
+      <div class="head">
+        <div class="av" id="liveAv">T</div>
         <div>
-          <div class="lbl" id="phLabel">__PHONE__</div>
-          <div class="sublbl" id="phSub">Inbound — Amanda is ready</div>
+          <div class="nm" id="liveAgent">Tony</div>
+          <div class="stat" id="liveStat"><span class="rd"></span> connecting…</div>
         </div>
-        <div class="right">
-          <span class="status" id="status">Idle</span>
+        <div class="pull">
+          <button class="btn ghost" onclick="testRespond()">📋 paste reply</button>
+          <button class="btn danger" onclick="endCallManual()">end call</button>
         </div>
       </div>
-
-      <div class="esc-banner" id="escBanner">
-        <b>⚠ Escalation:</b> <span id="escReason"></span> · transferring to a human dispatcher.
+      <div class="transcript" id="transcript">
+        <div class="tline empty">Transcript will stream here as the call progresses.</div>
       </div>
+    </div>
+  </div>
 
-      <!-- idle screen -->
-      <div class="idle" id="idle">
-        <div class="ph">__PHONE__
-          <span class="small">demo line — click "Connect call" to start</span>
+  <div>
+    <!-- GOOGLE SHEET (mock) -->
+    <div class="panel">
+      <h3>📊 Technician Availability <span class="meta">Google Sheet (mock)</span></h3>
+      <div class="body">
+        <div class="sheet" id="sheet">
+          <div class="sheet-row head"><span>Tech</span><span>Day</span><span>Window</span><span></span></div>
         </div>
-        <button class="btn start" onclick="startCall()">⌃ Connect call</button>
-        <div class="opening" id="openingPreview"></div>
-      </div>
-
-      <!-- chat (hidden until call starts) -->
-      <div class="chat" id="chat" style="display:none"></div>
-
-      <div class="bar" id="inputBar" style="display:none">
-        <input id="t" placeholder="Speak as the caller…" autocomplete="off">
-        <button class="btn" id="sendBtn" onclick="send()">Send</button>
       </div>
     </div>
 
-    <!-- ─── RIGHT: side panel ─── -->
-    <div class="side">
-
-      <div class="panel">
-        <h3>Live intake</h3>
-        <div class="body" id="fields"></div>
+    <!-- QUEUE -->
+    <div class="panel" id="queuePanel">
+      <h3>⏰ Queue & retry ladder <span class="meta" id="queueMeta">empty</span></h3>
+      <div class="body" id="queueBody">
+        <div class="muted" style="font-size:12px">After-hours leads and unanswered retries land here (20 min → 24 h → 72 h, max 3 attempts).</div>
       </div>
+    </div>
 
-      <div class="panel" id="outboundPanel" style="display:none">
-        <h3>Outbound lead (Yelp / Thumbtack)</h3>
-        <div class="lead">
-          <label>Name</label><input id="lead-name" value="Marcus Lee">
-          <label>Phone</label><input id="lead-phone" value="+1 510 555 0119">
-          <label>Problem</label><input id="lead-problem" value="GE dryer not heating, drum spins fine">
-          <button class="btn" style="margin-top:6px" onclick="startOutbound()">📞 Place outbound call</button>
-        </div>
+    <!-- BOOKINGS -->
+    <div class="panel" id="bookingsPanel">
+      <h3>✅ Confirmed bookings <span class="meta" id="bkMeta">0</span></h3>
+      <div class="body" id="bookings">
+        <div class="muted" style="font-size:12px">No bookings yet.</div>
       </div>
-
-      <div class="panel">
-        <h3>Try a scenario</h3>
-        <div class="scn" id="scenarios"></div>
-      </div>
-
-      <div class="panel">
-        <h3>Confirmed bookings</h3>
-        <div class="body" id="bookings">
-          <div class="empty">No bookings yet — run a scenario above.</div>
-        </div>
-      </div>
-
     </div>
   </div>
 </div>
+</div>
 
+<!-- Vapi web SDK loader (lazy, only when first call starts) -->
 <script>
-// ─── state ────────────────────────────────────────────────────────
 let CFG = null;
-let agent = "amanda";
-let inCall = false;
-let busy = false;          // a turn is in-flight or scenario is playing
-let ttsOn = true;
-const fieldEls = {};
+let CURRENT_CALL = null;
+let CURRENT_LEAD = null;
+let vapi = null;
 
-// ─── browser TTS — Amanda (female) + Tony (male) ─────────────────
-let voiceCache = {amanda: null, tony: null};
-function pickVoices(){
-  const vs = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
-  if (!vs.length) return;
-  const en = vs.filter(v => /en[-_]/i.test(v.lang));
-  const pool = en.length ? en : vs;
-  const female = pool.find(v => /samantha|victoria|karen|moira|tessa|allison|female|fiona|google us english/i.test(v.name)) || pool[0];
-  const male   = pool.find(v => /daniel|alex|tom|fred|aaron|male|google uk english male/i.test(v.name)) || pool[pool.length-1] || pool[0];
-  voiceCache.amanda = female;
-  voiceCache.tony   = male;
-}
-if (window.speechSynthesis){
-  window.speechSynthesis.onvoiceschanged = pickVoices;
-  pickVoices();
-}
-function speak(text, who){
-  if (!ttsOn || !window.speechSynthesis) return;
-  try { window.speechSynthesis.cancel(); } catch(e){}
-  const u = new SpeechSynthesisUtterance(text);
-  const v = voiceCache[who];
-  if (v) u.voice = v;
-  u.rate = 1.02; u.pitch = (who === "amanda") ? 1.08 : 0.92;
-  window.speechSynthesis.speak(u);
-}
-function toggleTTS(){
-  ttsOn = !ttsOn;
-  document.getElementById("ttsBadge").textContent = ttsOn ? "🔊 voice · on" : "🔇 voice · off";
-  if (!ttsOn && window.speechSynthesis) window.speechSynthesis.cancel();
-}
-
-// ─── boot ─────────────────────────────────────────────────────────
 async function boot(){
   CFG = await (await fetch("/api/config")).json();
   renderBadges();
-  renderAgents();
-  renderFields();
-  renderScenarios();
-  updateOpeningPreview();
+  renderAgents(CFG);
+  renderLeadButtons();
+  loadSheet();
+  loadQueue();
   loadBookings();
+  startPolling();
 }
 boot();
 
 function renderBadges(){
   const b = document.getElementById("badges");
   b.innerHTML = "";
-  b.appendChild(badge(CFG.llm_live ? "LLM · live (Claude)" : "LLM · scripted fallback", CFG.llm_live));
+  b.appendChild(badge(CFG.llm_live ? "LLM · live" : "LLM · scripted", CFG.llm_live));
+  b.appendChild(badge(CFG.vapi_live ? "Vapi · live" : "Vapi · not configured", CFG.vapi_live));
   b.appendChild(badge(CFG.telegram_live ? "Telegram · live" : "Telegram · dry-run", CFG.telegram_live));
   b.appendChild(badge("SMS · dry-run (Twilio in prod)", false));
 }
@@ -398,339 +380,350 @@ function badge(text, live){
   return e;
 }
 
-function renderAgents(){
-  const c = document.getElementById("agents"); c.innerHTML = "";
-  CFG.agents.forEach(a => {
+function renderAgents(cfg){
+  const wrap = document.getElementById("agents");
+  wrap.innerHTML = "";
+  cfg.agents.forEach(a => {
     const el = document.createElement("div");
-    el.className = "agent" + (a.key === agent ? " on" : "");
-    el.onclick = () => switchAgent(a.key);
-    el.innerHTML =
-      `<div class="avatar ${a.key}">${a.name[0]}</div>
-       <div style="flex:1">
-         <div class="who"><span class="dot"></span>${a.name} — ${a.channel}</div>
-         <div class="why">${escapeHtml(a.voice)}</div>
-       </div>`;
-    c.appendChild(el);
+    el.className = "agent idle";
+    el.id = "agent-" + a.key;
+    el.innerHTML = `
+      <div class="av ${a.key}">${a.name[0]}</div>
+      <div style="flex:1;min-width:0">
+        <div class="nm"><span class="dot"></span>${a.name}</div>
+        <div class="why">${escapeHtml(a.voice)}</div>
+        <div style="margin-top:4px">${(a.languages||[]).map(l => '<span class="lang">' + l + '</span>').join('')}<span class="lang">${a.channel}</span></div>
+      </div>
+      <div class="stat">
+        <div class="st">status</div>
+        <div class="sv" id="agent-st-${a.key}">idle</div>
+      </div>`;
+    wrap.appendChild(el);
   });
 }
 
-function switchAgent(key){
-  if (busy) return;
-  agent = key;
-  inCall = false;
-  document.getElementById("outboundPanel").style.display = (key === "tony") ? "block" : "none";
-  document.querySelectorAll(".agent").forEach((e,i) => {
-    e.classList.toggle("on", CFG.agents[i].key === key);
-  });
-  resetPanel();
-  updateOpeningPreview();
+async function refreshAgents(){
+  try {
+    const j = await (await fetch("/api/agents/status")).json();
+    Object.entries(j.agents).forEach(([k,a]) => {
+      const card = document.getElementById("agent-" + k);
+      const sv = document.getElementById("agent-st-" + k);
+      if (card){
+        card.classList.remove("idle","busy","offline");
+        card.classList.add(a.status || "idle");
+      }
+      if (sv) sv.textContent = a.status || "idle";
+    });
+  } catch(e){}
 }
 
-function updateOpeningPreview(){
-  const a = CFG.agents.find(x => x.key === agent);
-  const opening = document.getElementById("openingPreview");
-  const role = agent === "amanda"
-    ? "Inbound caller dials in →"
-    : "Tony places the call to a fresh Yelp lead →";
-  opening.innerHTML = `<div style="color:var(--mut);font-size:11.5px;margin-bottom:6px;letter-spacing:.3px;text-transform:uppercase">${role}</div><b>${a.name}:</b> "${escapeHtml(a.opening)}"`;
-  document.getElementById("phSub").textContent =
-    (a.channel === "inbound" ? "Inbound — " : "Outbound — ") + a.name + " is ready";
-}
-
-function renderFields(){
-  const c = document.getElementById("fields"); c.innerHTML = "";
-  CFG.fields.forEach(f => {
-    const e = document.createElement("div");
-    e.className = "field";
-    e.innerHTML = `<div class="ic"></div><div class="lbl">${escapeHtml(f.label)}</div><div class="val">—</div>`;
-    fieldEls[f.key] = e;
-    c.appendChild(e);
-  });
-}
-
-function renderScenarios(){
-  const c = document.getElementById("scenarios"); c.innerHTML = "";
-  CFG.scenarios.forEach(s => {
+function renderLeadButtons(){
+  const c = document.getElementById("leads"); c.innerHTML = "";
+  CFG.sample_leads.forEach(s => {
     const b = document.createElement("button");
-    b.disabled = busy;
-    b.onclick = () => playScenario(s.key);
-    b.innerHTML =
-      `<span class="ttag ${s.tag}">${s.tag}</span>
-       <span class="ts">
-         <span class="tt">${escapeHtml(s.title)}</span>
-         <span class="td">${escapeHtml(s.summary)}</span>
-       </span>`;
+    b.className = "scn";
+    b.onclick = () => fireLead(s.key);
+    b.innerHTML = `
+      <span class="tag ${s.tag}">${s.tag}</span>
+      <span class="label">${escapeHtml(s.label)}</span>
+      <span class="summary">${escapeHtml(s.summary)}</span>`;
     c.appendChild(b);
   });
 }
 
-// ─── call lifecycle ──────────────────────────────────────────────
-function setStatus(label, cls){
-  const s = document.getElementById("status");
-  s.textContent = label;
-  s.className = "status " + (cls || "");
-  const bar = document.getElementById("phbar");
-  bar.classList.remove("ring","active");
-  if (cls === "ring") bar.classList.add("ring");
-  if (cls === "active") bar.classList.add("active");
-}
-
-function resetPanel(){
-  document.getElementById("chat").innerHTML = "";
-  document.getElementById("chat").style.display = "none";
-  document.getElementById("inputBar").style.display = "none";
-  document.getElementById("idle").style.display = "flex";
-  document.getElementById("escBanner").classList.remove("on");
-  setStatus("Idle","");
-  Object.values(fieldEls).forEach(el => {
-    el.classList.remove("done","flash");
-    el.querySelector(".val").textContent = "—";
-  });
-}
-
-async function startCall(){
-  if (busy) return;
-  busy = true;
-  setStatus("Ringing…","ring");
-  document.getElementById("idle").style.display = "none";
-  document.getElementById("chat").style.display = "flex";
-  document.getElementById("inputBar").style.display = "flex";
-  enableInput();
-  await wait(700);
-  const j = await api("/api/call/start", {agent, caller: callerId()});
-  appendMsg("agent", j.reply, CFG.agents.find(a => a.key === agent).name);
-  setStatus("In call · " + agentName(),"active");
-  applySnapshot(j);
-  inCall = true;
-  busy = false;
-  document.getElementById("t").focus();
-}
-
-async function startOutbound(){
-  if (busy) return;
-  busy = true;
-  const name = document.getElementById("lead-name").value.trim();
-  const phone = document.getElementById("lead-phone").value.trim();
-  const problem = document.getElementById("lead-problem").value.trim();
-  switchAgent("tony");
-  setStatus("Dialing lead…","ring");
-  document.getElementById("idle").style.display = "none";
-  document.getElementById("chat").style.display = "flex";
-  document.getElementById("inputBar").style.display = "flex";
-  enableInput();
-  await wait(900);
-  const j = await api("/api/outbound", {name, phone, problem});
-  window.__caller = j.caller || phone;
-  appendMsg("agent", j.reply, "Tony");
-  setStatus("In call · Tony","active");
-  applySnapshot(j);
-  inCall = true;
-  busy = false;
-  document.getElementById("t").focus();
-}
-
-function callerId(){
-  if (agent === "tony" && window.__caller) return window.__caller;
-  return "web-demo-" + agent;
-}
-
-function agentName(){
-  return (CFG.agents.find(a => a.key === agent) || {}).name || "Agent";
-}
-
-// ─── one turn (user types) ───────────────────────────────────────
-async function send(){
-  const inp = document.getElementById("t");
-  const v = inp.value.trim();
-  if (!v || !inCall || busy) return;
-  inp.value = "";
-  await sendLine(v);
-}
-
-async function sendLine(text){
-  busy = true;
-  appendMsg("you", text);
-  showTyping(true);
-  const j = await api("/api/call/turn", {agent, caller: callerId(), text});
-  await wait(380);
-  showTyping(false);
-  appendMsg("agent", j.reply, agentName());
-  applySnapshot(j);
-  if (j.escalation){
-    showEscalation(j.escalation);
-    setStatus("Escalated","esc");
-    endCall();
-  } else if (j.booked){
-    showConfirm(j.booking, j.telegram, j.sms);
-    setStatus("Booked · call ended","ended");
-    endCall();
-    loadBookings();
+// ─── FIRE LEAD ───────────────────────────────────────────────────
+async function fireLead(key){
+  document.querySelectorAll("#leads .scn").forEach(b => b.disabled = true);
+  const r = await api("/api/leads/simulate", {key});
+  CURRENT_LEAD = r;
+  await animateDecision(r);
+  if (r.decision.action === "call"){
+    const start = await api("/api/vapi/start", {lead_id: r.lead_id});
+    CURRENT_CALL = start;
+    await startVapiCall(start);
   }
-  busy = false;
+  await Promise.all([refreshAgents(), loadSheet(), loadQueue()]);
+  document.querySelectorAll("#leads .scn").forEach(b => b.disabled = false);
 }
 
-function endCall(){
-  inCall = false;
-  const t = document.getElementById("t");
-  const b = document.getElementById("sendBtn");
-  t.disabled = true; b.disabled = true;
-  t.placeholder = "Call ended — switch agents or run another scenario";
-}
+// ─── ROUTING ANIMATION ───────────────────────────────────────────
+async function animateDecision(r){
+  const body = document.getElementById("routerBody");
+  const d = r.decision;
+  const lead = r.lead;
+  document.getElementById("routerMeta").textContent =
+    `${d.total_s}s · budget ${d.budget_hit ? '✓' : '✗'}`;
 
-function enableInput(){
-  const t = document.getElementById("t");
-  t.disabled = false;
-  document.getElementById("sendBtn").disabled = false;
-  t.placeholder = "Speak as the caller…";
-}
+  body.innerHTML = `
+    <div class="lead-head">
+      <span class="src">${escapeHtml(lead.source)}</span>
+      <span class="nm">${escapeHtml(lead.name || '(no name)')}</span>
+      <span class="why">${escapeHtml(lead.city || '')} · ${escapeHtml(lead.appliance_hint || '')}</span>
+      ${lead.language === "es" ? '<span class="lang">ES</span>' : ''}
+      ${!lead.consent ? '<span class="lang" style="background:#2a1414;color:#e25555">NO CONSENT</span>' : ''}
+      ${!lead.phone ? '<span class="lang" style="background:#241c0e;color:#e8a23a">NO PHONE</span>' : ''}
+    </div>
+    <div class="budget ${d.budget_hit ? 'hit' : 'miss'}">
+      <span class="lbl">Lead → talk</span>
+      <div class="bar"><div class="fill" id="budgetFill"></div></div>
+      <span class="now" id="budgetNow">0 ms</span>
+      <span class="max">/ 2000 ms</span>
+    </div>
+    <div class="steps" id="steps"></div>
+    <div id="outcome"></div>`;
 
-// ─── scenarios ───────────────────────────────────────────────────
-async function playScenario(key){
-  if (busy) return;
-  const s = await (await fetch("/api/scenarios/" + key)).json();
-  switchAgent(s.agent);
-  document.querySelectorAll(".scn button").forEach(b => b.disabled = true);
-  if (s.agent === "tony" && s.seed){
-    document.getElementById("lead-name").value = s.seed.name || "";
-    document.getElementById("lead-phone").value = s.seed.phone || "";
-    document.getElementById("lead-problem").value = s.seed.problem || "";
-    await startOutbound();
-  } else {
-    await startCall();
-  }
-  for (const line of s.lines){
-    if (!inCall) break;            // stop on escalation
-    await wait(900 + Math.random()*500);
-    await sendLine(line);
-  }
-  document.querySelectorAll(".scn button").forEach(b => b.disabled = false);
-}
+  const stepsHost = document.getElementById("steps");
+  const fill = document.getElementById("budgetFill");
+  const nowEl = document.getElementById("budgetNow");
+  const start = performance.now();
+  const allMs = d.steps.length ? d.steps[d.steps.length - 1].ms : 0;
+  const replayMs = Math.max(allMs, 1400);   // stretch slightly so each step is legible
 
-// ─── snapshot helpers ────────────────────────────────────────────
-function applySnapshot(j){
-  if (!j || !j.fields) return;
-  CFG.fields.forEach(f => {
-    const v = j.fields[f.key];
-    const el = fieldEls[f.key];
-    if (!el) return;
-    const had = el.classList.contains("done");
-    if (v === undefined || v === null || v === "" || v === false){
-      // not yet
-    } else {
-      const display = (f.key === "fee_agreed") ? "Accepted ✓" : String(v);
-      el.querySelector(".val").textContent = display;
-      el.classList.add("done");
-      if (!had){
-        el.classList.add("flash");
-        setTimeout(() => el.classList.remove("flash"), 1000);
-      }
+  for (let i = 0; i < d.steps.length; i++){
+    const s = d.steps[i];
+    const targetT = (s.ms / Math.max(1, allMs)) * replayMs;
+    const elapsed = performance.now() - start;
+    if (targetT > elapsed) await wait(targetT - elapsed);
+
+    const row = document.createElement("div");
+    row.className = "step " + (s.ok ? "ok" : "bad");
+    row.innerHTML = `
+      <span class="ms">${Math.round(s.ms)} ms</span>
+      <span class="ic"></span>
+      <span class="lbl">${escapeHtml(s.label)}</span>`;
+    if (s.detail){
+      const det = document.createElement("span");
+      det.className = "det";
+      det.textContent = s.detail;
+      row.appendChild(det);
     }
-  });
-}
+    stepsHost.appendChild(row);
+    requestAnimationFrame(() => row.classList.add("show"));
 
-function showEscalation(reason){
-  const label = ({
-    sealed_system: "Sealed-system / Freon",
-    refund: "Refund request",
-    warranty: "Warranty question",
-    angry: "Angry caller",
-    out_of_area: "Out of service area",
-  })[reason] || reason;
-  document.getElementById("escReason").textContent = label;
-  document.getElementById("escBanner").classList.add("on");
-}
-
-function showConfirm(b, tg, sms){
-  const chat = document.getElementById("chat");
-  const e = document.createElement("div");
-  e.className = "confirm";
-  e.innerHTML =
-    `<div class="ck">✓</div>
-     <div>
-       <b>Booking confirmed · Ref ${b.id}</b>
-       <div class="meta">
-         <div><i>Customer</i>${escapeHtml(b.name)} · ${escapeHtml(b.phone)}</div>
-         <div><i>Address</i>${escapeHtml(b.address)}</div>
-         <div><i>Appliance</i>${escapeHtml(b.appliance)} · ${escapeHtml(b.brand)} · model ${escapeHtml(b.model || "n/a")}</div>
-         <div><i>Problem</i>${escapeHtml(b.problem)}</div>
-         <div><i>Window</i>${escapeHtml(b.window)}</div>
-         <div><i>Access</i>${escapeHtml(b.access || "—")}</div>
-         <div><i>Fee</i>$__FEE__ diagnostic — accepted</div>
-         <div style="margin-top:6px"><i>Telegram</i>${tg && tg.via === "telegram" ? "delivered ✓" : "dry-run"} · <i>SMS</i>${sms === "sent" ? "sent ✓" : "dry-run"}</div>
-       </div>
-     </div>`;
-  chat.appendChild(e);
-  chat.scrollTop = chat.scrollHeight;
-}
-
-// ─── UI primitives ───────────────────────────────────────────────
-function appendMsg(role, text, label){
-  const chat = document.getElementById("chat");
-  const m = document.createElement("div");
-  m.className = "msg " + (role === "you" ? "you" : "agent");
-  m.textContent = text;
-  chat.appendChild(m);
-  if (label){
-    const r = document.createElement("div");
-    r.className = "role";
-    r.textContent = label;
-    chat.appendChild(r);
+    const pct = Math.min(100, (s.ms / 2000) * 100);
+    fill.style.width = pct + "%";
+    if (s.ms > 2000) fill.classList.add("over");
+    nowEl.textContent = Math.round(s.ms) + " ms";
   }
-  chat.scrollTop = chat.scrollHeight;
-  if (role !== "you") speak(text, agent);
+
+  // Outcome card
+  const out = document.getElementById("outcome");
+  const map = {
+    call:   {ic:"📞", txt:"Placing Vapi call now",  why:`Routing to ${(d.agent_key||'').toUpperCase()} · ${d.reason}`, cls:"call"},
+    queue:  {ic:"⏰", txt:"Queued",                 why:`${d.reason} · fires later`,                                   cls:"queue"},
+    sms:    {ic:"💬", txt:"Sending text instead",   why:d.reason,                                                       cls:"sms"},
+    reject: {ic:"🚫", txt:"Cannot serve this lead", why:d.reason,                                                       cls:"reject"},
+  };
+  const m = map[d.action] || map.queue;
+  out.innerHTML = `
+    <div class="outcome ${m.cls}">
+      <div class="ic">${m.ic}</div>
+      <div>
+        <div class="txt"><b>${m.txt}</b></div>
+        <div class="why">${escapeHtml(m.why)}</div>
+      </div>
+    </div>`;
 }
 
-let typingEl = null;
-function showTyping(on){
-  const chat = document.getElementById("chat");
-  if (on){
-    typingEl = document.createElement("div");
-    typingEl.className = "typing on";
-    typingEl.innerHTML = "<span></span><span></span><span></span>";
-    chat.appendChild(typingEl);
-    chat.scrollTop = chat.scrollHeight;
-  } else if (typingEl){
-    typingEl.remove();
-    typingEl = null;
+// ─── VAPI WEB CALL ───────────────────────────────────────────────
+async function startVapiCall(start){
+  const live = document.getElementById("livePanel");
+  live.style.display = "flex";
+  document.getElementById("liveAgent").textContent = start.agent.name;
+  const av = document.getElementById("liveAv");
+  av.textContent = start.agent.name[0];
+  av.className = "av " + start.agent.key;
+  document.getElementById("liveStat").innerHTML = '<span class="rd"></span> connecting…';
+  const tr = document.getElementById("transcript");
+  tr.innerHTML = "";
+
+  if (!start.vapi_configured || !start.public_key){
+    addLine("system",
+      "(Vapi is not configured in this environment — set VAPI_PUBLIC_KEY + VAPI_API_KEY in Vercel env. " +
+      "The routing flow above is fully functional; the chat console at /console exercises the same brain in browser-text mode.)");
+    setTimeout(() => addLine("bot", start.assistant.firstMessage, start.agent.name), 600);
+    return;
   }
-}
 
-async function loadBookings(){
+  // Lazy-load the Vapi web SDK from CDN.
+  if (!window.Vapi){
+    await loadScript("https://cdn.jsdelivr.net/npm/@vapi-ai/web@latest/dist/index.js");
+  }
+  if (!vapi){
+    vapi = new window.Vapi(start.public_key);
+    wireVapi();
+  }
   try {
-    const j = await (await fetch("/api/bookings")).json();
-    const c = document.getElementById("bookings");
-    if (!j.bookings.length){
-      c.innerHTML = `<div class="empty">No bookings yet — run a scenario above.</div>`;
-      return;
-    }
-    c.innerHTML = j.bookings.map(b => `
-      <div class="bk">
-        <span class="pill ${b.channel === "inbound" ? "in" : "out"}">${b.channel}</span>
-        <b>${escapeHtml(b.name)}</b> — ${escapeHtml(b.appliance)} (${escapeHtml(b.brand)})
-        <div class="meta">${escapeHtml(b.window)} · ${escapeHtml(b.address)}</div>
-        <div class="meta">Ref ${b.id} · ${(b.agent || "agent")} · fee ${b.fee_agreed ? "accepted" : "—"}</div>
-      </div>`).join("");
-  } catch (e){}
+    await vapi.start(start.assistant);
+  } catch (e){
+    addLine("system", "Vapi start error: " + (e?.message || e));
+  }
 }
 
+function wireVapi(){
+  vapi.on("call-start", () => {
+    document.getElementById("liveStat").innerHTML = '<span class="rd"></span> in call';
+    postEvent({kind:"in_progress"});
+  });
+  vapi.on("call-end", () => {
+    document.getElementById("liveStat").textContent = "call ended";
+    postEvent({kind:"ended", outcome:"answered"}).then(() => {
+      loadBookings(); refreshAgents(); loadSheet();
+    });
+  });
+  vapi.on("message", (msg) => {
+    if (msg.type === "transcript" && msg.transcriptType === "final"){
+      const role = msg.role === "user" ? "you" : "bot";
+      addLine(role, msg.transcript, role === "bot" ? CURRENT_CALL.agent.name : "Customer");
+      postEvent({kind:"transcript", role: msg.role, text: msg.transcript});
+    }
+  });
+  vapi.on("error", (e) => {
+    addLine("system", "Vapi error: " + (e?.message || JSON.stringify(e)));
+  });
+}
+
+function postEvent(ev){
+  if (!CURRENT_CALL) return Promise.resolve();
+  return fetch("/api/vapi/event", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({call_id: CURRENT_CALL.call_id, ...ev}),
+  }).catch(() => {});
+}
+
+function endCallManual(){
+  if (vapi){ try { vapi.stop(); } catch(e){} }
+  if (CURRENT_CALL) postEvent({kind:"ended", outcome:"answered"}).then(() => {
+    loadBookings(); refreshAgents();
+  });
+  document.getElementById("liveStat").textContent = "call ended";
+}
+
+function testRespond(){
+  const v = prompt("Type what the customer says (used when no mic / Vapi disabled):", "");
+  if (!v) return;
+  addLine("you", v, "Customer");
+  postEvent({kind:"transcript", role:"user", text:v});
+}
+
+function addLine(role, text, label){
+  const tr = document.getElementById("transcript");
+  if (tr.querySelector(".tline.empty")) tr.innerHTML = "";
+  const m = document.createElement("div");
+  if (role === "system"){
+    m.className = "tline empty"; m.textContent = text;
+  } else {
+    m.className = "tline " + (role === "you" ? "you" : "bot");
+    m.textContent = text;
+  }
+  tr.appendChild(m);
+  if (label && role !== "system"){
+    const r = document.createElement("div");
+    r.className = "trole" + (role === "you" ? " you" : "");
+    r.textContent = label;
+    tr.appendChild(r);
+  }
+  tr.scrollTop = tr.scrollHeight;
+}
+
+// ─── SHEET (technician availability) ─────────────────────────────
+async function loadSheet(){
+  const j = await (await fetch("/api/slots")).json();
+  const wrap = document.getElementById("sheet");
+  wrap.innerHTML = '<div class="sheet-row head"><span>Tech</span><span>Day</span><span>Window</span><span></span></div>';
+  j.slots.forEach(s => {
+    const row = document.createElement("div");
+    const cls = s.free ? "free" : (s.held_for ? "held" : "taken");
+    row.className = "sheet-row " + cls;
+    row.innerHTML = `
+      <span class="t">${escapeHtml(s.technician)}</span>
+      <span>${escapeHtml(s.day)}</span>
+      <span>${escapeHtml(s.window)}</span>
+      <span class="booked-ic">${s.free ? "·" : (s.held_for ? "⏳" : "✕")}</span>`;
+    wrap.appendChild(row);
+  });
+}
+
+// ─── QUEUE ───────────────────────────────────────────────────────
+async function loadQueue(){
+  const j = await (await fetch("/api/queue")).json();
+  const body = document.getElementById("queueBody");
+  document.getElementById("queueMeta").textContent =
+    j.queued.length ? `${j.queued.length} waiting` : "empty";
+  if (!j.queued.length){
+    body.innerHTML = '<div class="muted" style="font-size:12px">After-hours leads and unanswered retries land here (20 min → 24 h → 72 h, max 3 attempts).</div>';
+    return;
+  }
+  body.innerHTML = j.queued.map(q => {
+    const ic = q.reason === "retry" ? "🔁" : (q.reason === "outside business hours" ? "🌙" : "⏰");
+    return `<div class="queue-row">
+      <span class="ic">${ic}</span>
+      <span class="sum">${escapeHtml(q.summary)}</span>
+      <span class="reason">${escapeHtml(q.reason)}</span>
+      <span class="fire">${escapeHtml(q.fire_label)}</span>
+    </div>`;
+  }).join("");
+}
+
+// ─── BOOKINGS ────────────────────────────────────────────────────
+async function loadBookings(){
+  const j = await (await fetch("/api/bookings")).json();
+  document.getElementById("bkMeta").textContent = j.bookings.length;
+  const c = document.getElementById("bookings");
+  if (!j.bookings.length){
+    c.innerHTML = '<div class="muted" style="font-size:12px">No bookings yet.</div>';
+    return;
+  }
+  c.innerHTML = j.bookings.map(b => `
+    <div class="bk">
+      <div class="row">
+        <span class="pill ${b.channel === "inbound" ? "in" : "out"}">${b.channel || b.agent}</span>
+        <b>${escapeHtml(b.name || "(no name)")}</b>
+      </div>
+      <div class="meta">${escapeHtml(b.appliance || "")} ${b.brand ? " · " + escapeHtml(b.brand) : ""}</div>
+      <div class="meta">${escapeHtml(b.window || "")} · ${escapeHtml(b.address || "")}</div>
+      <div class="meta">Ref ${escapeHtml(b.id)} · agent ${escapeHtml(b.agent || "")} · fee ${b.fee_agreed ? "accepted" : "—"}</div>
+    </div>`).join("");
+}
+
+// ─── POLLING ─────────────────────────────────────────────────────
+function startPolling(){
+  setInterval(() => {
+    refreshAgents();
+    loadQueue();
+  }, 3000);
+}
+
+async function resetDemo(){
+  await api("/api/demo/reset", {});
+  CURRENT_LEAD = null; CURRENT_CALL = null;
+  document.getElementById("routerBody").innerHTML =
+    '<div class="lead-feed-empty">Click any lead above to fire a webhook into the dispatcher.</div>';
+  document.getElementById("routerMeta").textContent = "awaiting first lead…";
+  document.getElementById("livePanel").style.display = "none";
+  await Promise.all([refreshAgents(), loadSheet(), loadQueue(), loadBookings()]);
+}
+
+// ─── helpers ─────────────────────────────────────────────────────
 async function api(path, body){
   const r = await fetch(path, {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify(body || {})
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(body || {}),
   });
   return r.json();
 }
-
 function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+function loadScript(src){
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src; s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
 function escapeHtml(s){
   return String(s == null ? "" : s)
     .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
-
-document.getElementById("t").addEventListener("keydown", e => {
-  if (e.key === "Enter") send();
-});
 </script>
 </body></html>
 """

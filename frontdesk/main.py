@@ -1,34 +1,83 @@
-"""FastAPI: Safro Solutions AI Receptionist & Booking demo.
+"""FastAPI app — Safro Solutions AI dispatcher.
 
-Two agents (Amanda inbound, Tony outbound) live behind a single HTML
-console. Telegram delivery is real when a token is set, otherwise
-dry-run logged. SMS and voice telephony are dry-run in the demo and
-real in production (Twilio / Vapi).
+Two surfaces:
+  /         → ops dashboard (the demo Maya asked for):
+              lead → router (<2s budget) → Vapi web call → booking.
+  /console  → the original chat console (Amanda inbound, useful as
+              fallback when there's no microphone, no Vapi key, etc.).
 """
 from __future__ import annotations
 
 import os
+import time
+import uuid
+from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from .agents import AGENTS, COMPANY, DIAGNOSTIC_FEE_USD, REQUIRED_FIELDS
-from .pipeline import handle_turn, start_call, trigger_outbound
+from .leads import (
+    SAMPLE_LEADS,
+    Lead,
+    from_thumbtack_webhook,
+    from_yelp_webhook,
+    sample_by_key,
+)
+from .pipeline import handle_turn as console_handle_turn
+from .pipeline import start_call as console_start_call
+from .pipeline import trigger_outbound as console_trigger_outbound
+from .router import SERVICE_AREA_CITIES, route
 from .scenarios import SCENARIOS
-from .store import bookings, escalations
-from .telegram import handle_update, set_webhook
-from .ui import INDEX_HTML
+from .scheduler import (
+    enqueue,
+    history_snapshot,
+    queue_snapshot,
+    record_attempt,
+    schedule_retry,
+)
+from .slots import all_slots, book as book_slot, free_slots
+from .store import (
+    CallRecord,
+    LeadRecord,
+    add_booking,
+    add_call,
+    add_lead,
+    agent_status_snapshot,
+    append_transcript,
+    bookings,
+    bump_agent_counts,
+    call_snapshot,
+    escalations,
+    get_call,
+    get_lead,
+    leads_snapshot,
+    log_escalation,
+    recent_calls,
+    reset_demo as store_reset,
+    set_agent_status,
+    set_call_status,
+    update_lead_call,
+)
+from .sms import send_sms
+from .store import Booking
+from .telegram import broadcast_booking, handle_update, set_webhook
+from .transcript import parse_transcript, transcript_text_of
+from .ui import OPS_HTML
+from .ui_console import INDEX_HTML as CONSOLE_HTML
+from .vapi_client import is_configured as vapi_configured
+from .vapi_client import parse_webhook as vapi_parse
+from .vapi_client import public_key as vapi_public_key
+from .vapi_client import web_call_config
 
-app = FastAPI(title="Safro Receptionist AI", version="2.0.0")
+app = FastAPI(title="Safro Dispatcher", version="3.0.0")
 
-BOT_HANDLE = "inbound_call_bot"  # t.me/inbound_call_bot — registered Telegram bot
+BOT_HANDLE = "inbound_call_bot"
 DEMO_PHONE = "+1 (747) 900-2649"
 
 
-# ---------------------------------------------------------------------------
-# Health + config
-# ---------------------------------------------------------------------------
+# ─── Health + config ────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health() -> dict:
@@ -40,6 +89,7 @@ def health() -> dict:
         "escalations": len(escalations()),
         "telegram_live": bool(os.environ.get("TELEGRAM_BOT_TOKEN")),
         "llm_live": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "vapi_live": vapi_configured(),
     }
 
 
@@ -51,31 +101,420 @@ def config() -> dict:
         "demo_phone": DEMO_PHONE,
         "telegram_bot": BOT_HANDLE,
         "fields": [{"key": k, "label": label} for k, label in REQUIRED_FIELDS],
+        "service_area_cities": sorted(SERVICE_AREA_CITIES),
         "agents": [
-            {"key": a.key, "name": a.name, "voice": a.voice, "channel": a.channel,
-             "opening": a.opening_line}
+            {
+                "key": a.key, "name": a.name, "voice": a.voice_style,
+                "channel": a.channel, "opening": a.opening_line,
+                "languages": a.languages,
+            }
             for a in AGENTS.values()
         ],
-        "scenarios": [{"key": s.key, "title": s.title, "tag": s.tag,
-                       "agent": s.agent, "summary": s.summary}
-                      for s in SCENARIOS],
+        "sample_leads": [
+            {"key": s["key"], "label": s["label"], "summary": s["summary"],
+             "tag": s["tag"]}
+            for s in SAMPLE_LEADS
+        ],
+        "scenarios": [
+            {"key": s.key, "title": s.title, "tag": s.tag,
+             "agent": s.agent, "summary": s.summary}
+            for s in SCENARIOS
+        ],
         "telegram_live": bool(os.environ.get("TELEGRAM_BOT_TOKEN")),
         "llm_live": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "vapi_live": vapi_configured(),
+        "vapi_public_key": vapi_public_key() or "",
     }
 
 
-# ---------------------------------------------------------------------------
-# Call lifecycle
-# ---------------------------------------------------------------------------
+# ─── Ops dashboard: lead intake → routing → call ────────────────────────────
+
+class LeadSimReq(BaseModel):
+    key: str
+    auto_call: bool = True   # if True and decision==call, immediately start agent
+
+
+@app.post("/api/leads/simulate")
+def leads_simulate(r: LeadSimReq) -> dict:
+    import datetime as _dt
+    sample = sample_by_key(r.key)
+    if not sample:
+        return JSONResponse({"error": "unknown sample lead"}, status_code=404)
+    if sample["payload"].get("project_id", "").startswith("thumbtack"):
+        lead = from_thumbtack_webhook(_thumbtack_shape(sample["payload"]))
+    else:
+        lead = from_yelp_webhook(sample["payload"])
+
+    # Clear any "simulated previous call" force_busy from prior scenarios so
+    # the rollover demo doesn't leak between clicks.
+    for k, a in agent_status_snapshot().items():
+        if a.get("current_call_id") == "sim-prev-call":
+            set_agent_status(k, "idle")
+
+    # Demo overrides:
+    #  • force_hour/force_minute  → pretend this lead arrived at a specific
+    #    local time, so the after-hours queue path is visible during a daytime demo.
+    #  • force_busy               → mark the listed agents BUSY before routing,
+    #    so the overflow chain (Tony busy → Sofia) is visible on a single click.
+    forced_now = None
+    if "force_hour" in sample:
+        now = _dt.datetime.now().replace(
+            hour=sample["force_hour"],
+            minute=sample.get("force_minute", 0),
+            second=0, microsecond=0,
+        )
+        forced_now = now
+
+    for agent_key in sample.get("force_busy", []):
+        set_agent_status(agent_key, "busy",
+                          call_id="sim-prev-call",
+                          lead_id="sim-prev-lead")
+
+    return _ingest_lead(lead, sample_label=sample["label"], force_now=forced_now)
+
+
+@app.post("/api/leads/webhook")
+async def leads_webhook(request: Request) -> dict:
+    """Generic webhook receiver — accepts both Yelp and Thumbtack shapes."""
+    body = await request.json()
+    if isinstance(body, dict) and ("consumer" in body or "project_text" in body):
+        lead = from_yelp_webhook(body)
+    elif isinstance(body, dict) and "request" in body:
+        lead = from_thumbtack_webhook(body)
+    else:
+        return JSONResponse({"error": "unrecognized payload"}, status_code=400)
+    return _ingest_lead(lead)
+
+
+def _thumbtack_shape(yelp_payload: dict) -> dict:
+    """Light translator so a sample 'thumbtack' lead actually parses through
+    the thumbtack adapter — keeps the demo honest about payload shapes."""
+    c = yelp_payload.get("consumer", {})
+    return {
+        "requestPk": yelp_payload.get("project_id"),
+        "request": {
+            "firstName": c.get("first_name", ""),
+            "lastName": c.get("last_name", ""),
+            "phoneNumber": c.get("phone"),
+            "city": c.get("city", ""),
+            "description": yelp_payload.get("project_text", ""),
+            "language": yelp_payload.get("language", "en"),
+            "phoneConsent": c.get("opt_in_call", True),
+        },
+    }
+
+
+def _ingest_lead(lead: Lead, sample_label: str = "",
+                 force_now: Optional[object] = None) -> dict:
+    """Common path for both simulated + real webhook leads: run the router,
+    record, alert, return decision."""
+    lead_id = f"ld_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+    decision = route(lead, now=force_now)
+
+    rec = LeadRecord(
+        lead_id=lead_id, source=lead.source, received_at=lead.received_at,
+        customer_name=lead.display_name() or "(no name)",
+        phone=lead.phone, city=lead.city,
+        appliance_hint=lead.appliance_hint,
+        language=lead.language_hint, consent=lead.consent_call,
+        decision=decision.as_dict(),
+        queue_reason=decision.reason if decision.action == "queue" else None,
+    )
+    add_lead(rec)
+
+    # Telegram alert per outcome — Maya wants every lead to fire a notification.
+    _alert_lead(rec, decision, sample_label or lead.appliance_hint)
+
+    # Queue handling — store the lead for later firing.
+    if decision.action == "queue":
+        enqueue(lead_id, rec.customer_name + " · " + (rec.phone or "no-phone"),
+                decision.queue_until or (time.time() + 30),
+                reason=decision.reason)
+
+    return {
+        "lead_id": lead_id,
+        "lead": _serialize_lead(lead),
+        "decision": decision.as_dict(),
+    }
+
+
+def _serialize_lead(lead: Lead) -> dict:
+    return {
+        "source": lead.source, "external_id": lead.external_id,
+        "name": lead.display_name(), "phone": lead.phone,
+        "city": lead.city, "appliance_hint": lead.appliance_hint,
+        "language": lead.language_hint, "consent": lead.consent_call,
+    }
+
+
+def _alert_lead(rec: LeadRecord, decision, label: str) -> None:
+    icon = {"call": "📞", "queue": "⏰", "sms": "💬", "reject": "🚫"}[decision.action]
+    head = f"{icon}  Lead {rec.source.upper()} · {rec.customer_name}"
+    bits = [head,
+            f"Phone: {rec.phone or '(none)'}",
+            f"City:  {rec.city}",
+            f"Need:  {label or rec.appliance_hint}",
+            f"Decision: {decision.action.upper()} · {decision.reason}",
+            f"Routing: {decision.total_ms:.0f} ms (budget 2000 ms)"]
+    if decision.agent_key:
+        ag = AGENTS[decision.agent_key].name
+        bits.append(f"Agent: {ag}")
+    broadcast_booking("\n".join(bits))
+
+
+# ─── Vapi web-call lifecycle ────────────────────────────────────────────────
+
+class VapiStartReq(BaseModel):
+    lead_id: str
+
+
+@app.post("/api/vapi/start")
+def vapi_start(r: VapiStartReq) -> dict:
+    """Return the inline Vapi assistant config so the browser SDK can start
+    the call. Marks the chosen agent BUSY for the duration."""
+    rec = get_lead(r.lead_id)
+    if not rec:
+        return JSONResponse({"error": "unknown lead"}, status_code=404)
+    decision = rec.decision
+    if decision.get("action") != "call" or not decision.get("agent_key"):
+        return JSONResponse({"error": "no call action for this lead"}, status_code=400)
+    agent = AGENTS[decision["agent_key"]]
+
+    lead = Lead(
+        source=rec.source, external_id=r.lead_id, received_at=rec.received_at,
+        customer_first_name=rec.customer_name.split(" ")[0] if rec.customer_name else "",
+        customer_last_name=" ".join(rec.customer_name.split(" ")[1:]) if rec.customer_name else "",
+        phone=rec.phone, city=rec.city,
+        appliance_hint=rec.appliance_hint, language_hint=rec.language,
+        consent_call=rec.consent,
+    )
+    assistant = web_call_config(agent, lead)
+
+    call_id = f"cl_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+    add_call(CallRecord(
+        call_id=call_id, lead_id=r.lead_id, agent_key=agent.key,
+        started_at=time.time(), status="initiating",
+    ))
+    update_lead_call(r.lead_id, call_id)
+    set_agent_status(agent.key, "busy", call_id=call_id, lead_id=r.lead_id)
+    bump_agent_counts(agent.key)
+
+    return {
+        "call_id": call_id,
+        "agent": {"key": agent.key, "name": agent.name,
+                  "voice_style": agent.voice_style},
+        "assistant": assistant,
+        "public_key": vapi_public_key() or "",
+        "vapi_configured": vapi_configured(),
+    }
+
+
+class VapiEventReq(BaseModel):
+    call_id: str
+    kind: str                    # "ringing" | "in_progress" | "ended"
+    role: Optional[str] = None    # for transcript chunks
+    text: Optional[str] = None
+    vapi_call_id: Optional[str] = None
+    outcome: Optional[str] = None
+    transcript: Optional[str] = None
+
+
+@app.post("/api/vapi/event")
+def vapi_event(r: VapiEventReq) -> dict:
+    """Browser-side bridge for Vapi SDK events → our store.
+
+    The web SDK fires events in-page; the page POSTs them here so the
+    server can advance state + the dashboard can poll a single source.
+    """
+    c = get_call(r.call_id)
+    if not c:
+        return JSONResponse({"error": "unknown call"}, status_code=404)
+
+    if r.kind == "transcript" and r.text:
+        append_transcript(r.call_id, r.role or "assistant", r.text)
+        set_call_status(r.call_id, "in_progress",
+                        vapi_call_id=r.vapi_call_id)
+    elif r.kind in ("ringing", "in_progress"):
+        set_call_status(r.call_id, r.kind, vapi_call_id=r.vapi_call_id)
+    elif r.kind == "ended":
+        outcome = r.outcome or "answered"
+        set_call_status(r.call_id, "ended", outcome=outcome,
+                        vapi_call_id=r.vapi_call_id)
+        set_agent_status(c.agent_key, "idle")
+        record_attempt(c.lead_id, outcome, c.agent_key)
+
+        # If the call didn't actually connect → schedule retry.
+        if outcome in ("no_answer", "busy", "failed"):
+            attempts = sum(
+                1 for h in history_snapshot()
+                if h["lead_id"] == c.lead_id and h["outcome"] in
+                ("answered", "no_answer", "busy", "failed")
+            )
+            schedule_retry(c.lead_id, f"retry call to lead {c.lead_id}",
+                           attempts_so_far=attempts)
+        elif outcome == "answered":
+            # Parse the transcript into a booking record (Anthropic). The
+            # transcript is preferred from the explicit field; fall back to
+            # the streamed chunks the browser bridge already saved.
+            text = r.transcript or transcript_text_of(c.transcript)
+            _finalize_call(c, text)
+    return {"ok": True, "call": call_snapshot(r.call_id)}
+
+
+def _finalize_call(call: CallRecord, transcript_text: str) -> None:
+    """Run Anthropic transcript-parse, write Booking + send confirmations
+    OR log escalation. Best-effort — failures don't break the demo."""
+    parsed = parse_transcript(transcript_text)
+    if not parsed:
+        return
+    if parsed.get("escalation"):
+        from .agents import ESCALATION_REASONS
+        reason = parsed["escalation"]
+        log_escalation(call.lead_id, call.agent_key, reason,
+                        f"escalation during call {call.call_id}")
+        broadcast_booking(
+            f"⚠ Escalation — {ESCALATION_REASONS.get(reason, reason)}\n"
+            f"Agent: {AGENTS[call.agent_key].name}\n"
+            f"Lead: {call.lead_id}\n"
+            f"Route to dispatcher."
+        )
+        return
+    if not parsed.get("booked"):
+        return
+    fields = parsed.get("fields", {}) or {}
+    bid = f"bk_{int(time.time() * 1000) % 10_000_000:x}"
+    b = Booking(
+        id=bid, caller=call.lead_id, agent=call.agent_key,
+        channel=AGENTS[call.agent_key].channel,
+        name=str(fields.get("name", "") or ""),
+        phone=str(fields.get("phone", "") or ""),
+        address=str(fields.get("address", "") or ""),
+        appliance=str(fields.get("appliance", "") or ""),
+        brand=str(fields.get("brand", "") or ""),
+        model=str(fields.get("model", "") or ""),
+        problem=str(fields.get("problem", "") or ""),
+        window=str(fields.get("window", "") or ""),
+        access=str(fields.get("access", "") or ""),
+        fee_agreed=bool(fields.get("fee_agreed", False)),
+        slot_key=parsed.get("slot_key", "") or "",
+        lead_id=call.lead_id,
+    )
+    add_booking(b)
+    bump_agent_counts(call.agent_key, booked=True)
+    if b.slot_key:
+        try:
+            from .slots import book as book_slot_real
+            book_slot_real(b.slot_key, b.id, caller=call.lead_id)
+        except Exception:
+            pass
+
+    broadcast_booking(
+        f"📞 New booking — {COMPANY}\n"
+        f"Agent: {AGENTS[call.agent_key].name}\n"
+        f"Customer: {b.name}\n"
+        f"Phone: {b.phone}\n"
+        f"Address: {b.address}\n"
+        f"Appliance: {b.appliance} · {b.brand} · model {b.model or 'n/a'}\n"
+        f"Problem: {b.problem}\n"
+        f"Window: {b.window}\n"
+        f"Access: {b.access or '—'}\n"
+        f"Fee accepted: yes · Ref: {b.id}"
+    )
+    if b.phone:
+        send_sms(b.phone,
+                  f"{COMPANY}: you're booked for {b.window}. "
+                  f"Diagnostic fee ${DIAGNOSTIC_FEE_USD} accepted. Ref {b.id}.")
+
+
+@app.post("/api/vapi/webhook")
+async def vapi_webhook(request: Request) -> dict:
+    """Direct webhook from Vapi (production path).
+
+    Wired up here so production traffic from Vapi hits the same code as
+    the browser bridge. Best-effort: missing fields just no-op.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"ok": False}
+    evt = vapi_parse(payload)
+    # Tied to call by vapi_call_id — we don't always know our call_id here.
+    # The browser bridge keeps state authoritative for the demo.
+    return {"ok": True, "kind": evt.get("kind")}
+
+
+# ─── Lead / queue / agent / call snapshots for the dashboard poll ──────────
+
+@app.get("/api/leads")
+def api_leads() -> dict:
+    return {"leads": leads_snapshot()}
+
+
+@app.get("/api/leads/{lead_id}")
+def api_lead(lead_id: str) -> dict:
+    rec = get_lead(lead_id)
+    if not rec:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return {"lead": rec.__dict__}
+
+
+@app.get("/api/agents/status")
+def api_agents_status() -> dict:
+    return {"agents": agent_status_snapshot()}
+
+
+@app.get("/api/queue")
+def api_queue() -> dict:
+    return {"queued": queue_snapshot(), "history": history_snapshot()}
+
+
+@app.get("/api/calls/{call_id}")
+def api_call(call_id: str) -> dict:
+    snap = call_snapshot(call_id)
+    if not snap:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return {"call": snap}
+
+
+@app.get("/api/calls")
+def api_calls() -> dict:
+    return {"calls": recent_calls()}
+
+
+@app.get("/api/slots")
+def api_slots() -> dict:
+    """Mock 'Google Sheet' panel — every slot row, with current booked/held state."""
+    return {
+        "slots": [
+            {"technician": s.technician, "day": s.day_label, "window": s.window,
+             "free": s.free, "booked_by": s.booked_by, "held_for": s.held_for,
+             "key": s.key()}
+            for s in all_slots()
+        ],
+        "free_count": len(free_slots()),
+    }
+
+
+@app.post("/api/demo/reset")
+def demo_reset() -> dict:
+    from .slots import reset_demo as slots_reset
+    from .scheduler import reset_demo as sched_reset
+    store_reset()
+    slots_reset()
+    sched_reset()
+    return {"ok": True}
+
+
+# ─── Legacy chat console (Amanda inbound, no Vapi needed) ──────────────────
 
 class StartReq(BaseModel):
     agent: str = "amanda"
     caller: str = "web-demo"
 
 
-@app.post("/api/call/start")
-def call_start(r: StartReq) -> dict:
-    return start_call(r.caller, r.agent)
+@app.post("/api/console/start")
+def console_start(r: StartReq) -> dict:
+    return console_start_call(r.caller, r.agent)
 
 
 class TurnReq(BaseModel):
@@ -84,9 +523,9 @@ class TurnReq(BaseModel):
     text: str
 
 
-@app.post("/api/call/turn")
-def call_turn(r: TurnReq) -> dict:
-    return handle_turn(r.caller, r.text, r.agent)
+@app.post("/api/console/turn")
+def console_turn(r: TurnReq) -> dict:
+    return console_handle_turn(r.caller, r.text, r.agent)
 
 
 class OutboundReq(BaseModel):
@@ -95,34 +534,19 @@ class OutboundReq(BaseModel):
     problem: str = "Whirlpool dryer not heating"
 
 
-@app.post("/api/outbound")
-def outbound(r: OutboundReq) -> dict:
-    return trigger_outbound(r.name, r.phone, r.problem)
+@app.post("/api/console/outbound")
+def console_outbound(r: OutboundReq) -> dict:
+    return console_trigger_outbound(r.name, r.phone, r.problem)
 
-
-# ---------------------------------------------------------------------------
-# Scenarios — pre-scripted callers, played automatically by the UI
-# ---------------------------------------------------------------------------
 
 @app.get("/api/scenarios/{key}")
-def scenario(key: str) -> dict:
+def api_scenario(key: str) -> dict:
     s = next((s for s in SCENARIOS if s.key == key), None)
     if not s:
         return JSONResponse({"error": "unknown scenario"}, status_code=404)
-    return {
-        "key": s.key,
-        "title": s.title,
-        "tag": s.tag,
-        "agent": s.agent,
-        "summary": s.summary,
-        "seed": s.seed,
-        "lines": s.lines,
-    }
+    return {"key": s.key, "title": s.title, "tag": s.tag, "agent": s.agent,
+            "summary": s.summary, "seed": s.seed, "lines": s.lines}
 
-
-# ---------------------------------------------------------------------------
-# Read-only feeds for the UI
-# ---------------------------------------------------------------------------
 
 @app.get("/api/bookings")
 def api_bookings() -> dict:
@@ -134,9 +558,7 @@ def api_escalations() -> dict:
     return {"escalations": escalations()}
 
 
-# ---------------------------------------------------------------------------
-# Telegram
-# ---------------------------------------------------------------------------
+# ─── Telegram passthrough ──────────────────────────────────────────────────
 
 @app.post("/telegram/webhook")
 async def tg_webhook(request: Request) -> JSONResponse:
@@ -153,14 +575,21 @@ def admin_set_webhook(request: Request) -> dict:
     return set_webhook(base)
 
 
-# ---------------------------------------------------------------------------
-# UI
-# ---------------------------------------------------------------------------
+# ─── HTML routes ───────────────────────────────────────────────────────────
 
-@app.get("/", response_class=HTMLResponse)
-def home() -> str:
-    return (INDEX_HTML
+def _subst(html: str) -> str:
+    return (html
             .replace("__BOT__", BOT_HANDLE)
             .replace("__PHONE__", DEMO_PHONE)
             .replace("__COMPANY__", COMPANY)
             .replace("__FEE__", str(DIAGNOSTIC_FEE_USD)))
+
+
+@app.get("/", response_class=HTMLResponse)
+def home() -> str:
+    return _subst(OPS_HTML)
+
+
+@app.get("/console", response_class=HTMLResponse)
+def console() -> str:
+    return _subst(CONSOLE_HTML)

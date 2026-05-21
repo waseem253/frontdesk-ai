@@ -1,43 +1,63 @@
-# Safro Solutions Appliance Repair — AI Receptionist & Booking
+# Safro Solutions — AI Dispatcher (Yelp / Thumbtack → Vapi outbound in < 2 s)
 
-> Inbound caller dials in → **Amanda** (warm intake) takes the booking in
-> conversation, explains the diagnostic fee with confidence, escalates the
-> sensitive stuff (sealed-system, refunds, warranty, angry, out-of-area), and
-> fires the confirmation to **Telegram (real)** + SMS + log. Plus **Tony**,
-> the outbound agent who calls a fresh Yelp / Thumbtack lead and books on the
-> same path.
+> A fresh Yelp / Thumbtack lead fires a webhook → the dispatcher runs every
+> gate (TCPA, service area by city, business hours, phone present, slot
+> available, agent rotation) → Vapi places the call to the **first idle**
+> agent in the chain (Tony / Sofia / Amanda) → the customer talks to a
+> human-sounding AI → booking lands in the Google Sheet + Telegram alert
+> fires. **End-to-end in under 2 seconds from lead to ringing.**
 
-**Live demo:** _deployed on Vercel (Python runtime)_ · **Stack:** Python · FastAPI · Anthropic Claude · Telegram Bot API · Vercel
+**Live demo:** _deployed on Vercel_  ·  **Stack:** Python · FastAPI · Vapi
+(web + phone) · ElevenLabs voices · OpenAI gpt-4o-mini · Deepgram nova-2 ·
+Anthropic Claude (post-call extraction) · Telegram Bot API
 
-Built to the brief Maya laid out on the 5/20 call: two agents (Amanda + Tony),
-the Safro Solutions opening line, all ten intake fields, the fee-objection
-value pitch, and every escalation path.
+Built to Maya's 5/20 brief — outbound is primary, inbound is the follow-up.
 
 ---
 
-## What's in the demo
+## Two surfaces
 
-- **Two agents**, switchable in the header:
-  - **Amanda — inbound, warm/calm/professional.** Opens with _"Thank you for calling Safro Solutions Appliance Repair. This is Amanda. How can I help you today?"_
-  - **Tony — outbound, friendly/confident/not-robotic.** Seeded with the lead's name + phone + problem (the form they just submitted) and books from there.
-- **Live intake panel** — every required field lights up the moment Amanda extracts it: name, phone, full address + ZIP, appliance, brand, model, problem, window, access notes, and the diagnostic-fee agreement.
-- **Diagnostic-fee value pitch** — the agents lead with the fee _before_ booking and use the full "travel · expertise · diagnosis · estimate · reserved slot" argument when the caller hesitates. Bookings only confirm after explicit agreement.
-- **Escalation** — sealed-system / Freon, refund requests, warranty questions, angry callers (after one calm de-escalation), and anything outside the service area route to a human dispatcher and emit a Telegram alert.
-- **Confirmations** — every booking hits Telegram (real if bot configured), SMS (dry-run in demo, Twilio in prod), and the in-app log.
-- **Scenario player** — six pre-scripted callers (happy booking, fee objection, sealed-system, out-of-area, angry, Tony outbound) play through the same real engine so it's not a recording.
+| Route | What it is |
+|---|---|
+| `/` | **Ops dashboard** — the demo Maya asked for. Lead feed, sub-2s router visualization, three-agent floor with availability pills, mock Google Sheet of technician slots, live call panel with Vapi web SDK, queue + retry ladder, bookings log. |
+| `/console` | The original conversation engine — Amanda inbound chat console. Useful when there's no mic / no Vapi key, or to scrub the booking flow turn-by-turn. |
+
+---
 
 ## What's real vs. dry-run
 
 | Piece | Demo | Production |
 |---|---|---|
-| Conversation | Claude Sonnet 4.6 (JSON-mode, per-turn field extraction + escalation) | same, behind the voice agent |
-| **Telegram** | **real** — Start the bot, finish a booking, the confirmation arrives in your chat | same |
-| SMS | dry-run logged | Twilio |
-| Voice telephony | web simulator | Twilio number → Vapi / Retell |
-| Store / calendar | in-memory | Postgres + Google Calendar |
-| Outbound retry ladder | one-shot demo | answer/no-answer ladder over ~3 days |
+| Lead webhook | One-click sample fire AND real `POST /api/leads/webhook` | same |
+| Router timings | Real wall-clock with simulated step latencies that match prod (Sheets ~240 ms, geocode ~65 ms) | identical shape; real APIs swap in |
+| Voice | **Vapi** in browser (web call) — multilingual `eleven_turbo_v2_5`, gpt-4o-mini, Deepgram nova-2 | same Vapi config; phone delivery over Twilio |
+| **Telegram alert** | **real** (open the bot, /start, then fire a lead) | same |
+| Google Sheet of slots | Visual mock | gspread + a real Sheet ID (or KickStarter CRM → Google Calendar) |
+| SMS confirmation | Dry-run logged | Twilio (10DLC pending) |
+| Retry ladder | 20 min → 24 h → 72 h, max 3, visible in queue panel | same, fires from a worker |
+| Out-of-hours queue | Fires at next 7:00 AM, visible in queue panel | same |
+| Transcript → booking | Anthropic `claude-sonnet-4-6` parses the call transcript into the 10 required fields | same |
 
-With **no keys at all** the demo still completes every flow — there's a deterministic walker behind the same interface so the conversation never dead-ends.
+Without `VAPI_PUBLIC_KEY` the routing + queue + sheet flows still fully
+work; the call panel prints what would happen and the `/console` chat is
+the conversation fallback.
+
+---
+
+## Three agents
+
+| Agent | Channel | Voice (ElevenLabs) | Languages |
+|---|---|---|---|
+| **Amanda** | inbound | Sarah — warm, calm, professional | English |
+| **Tony**   | outbound | Charlie — friendly, confident, not robotic | English |
+| **Sofia**  | outbound | Matilda — warm, bilingual ES/EN, auto-switches | English + Spanish |
+
+Routing chains (first idle wins):
+- English outbound: Tony → Sofia → Amanda
+- Spanish outbound: Sofia → Tony → Amanda
+- Inbound: Amanda → Tony → Sofia
+
+---
 
 ## Run locally
 
@@ -47,39 +67,43 @@ pip install -r requirements.txt
 uvicorn frontdesk.main:app --reload   # http://localhost:8000
 ```
 
-Optional env:
-- `ANTHROPIC_API_KEY` — makes Amanda + Tony talk naturally instead of using the scripted fallback. `ANTHROPIC_MODEL` defaults to `claude-sonnet-4-6`.
-- `TELEGRAM_BOT_TOKEN` — makes the Telegram confirmation real. `GET /admin/set-webhook` registers the webhook to the running URL.
-- `TELEGRAM_OWNER_CHAT_ID` — pin the confirmation to one chat instead of broadcasting to every chat that has /start-ed.
-- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` — turn SMS real.
+Env (all optional — the demo runs without any of them):
 
-## API
+- `VAPI_PUBLIC_KEY` — required for the in-browser Vapi web call to start.
+- `VAPI_API_KEY` — required only for server-side outbound (placing a real
+  phone call, milestone 1).
+- `ANTHROPIC_API_KEY` — used by the post-call transcript parser and by the
+  fallback chat console.
+- `TELEGRAM_BOT_TOKEN` (+ optional `TELEGRAM_OWNER_CHAT_ID`) — turns the
+  Telegram alert real.
+- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` — turn SMS
+  real (production).
+
+---
+
+## API surface
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /` | the demo console |
-| `GET /api/config` | agents, fields, scenarios, integration status |
-| `POST /api/call/start` `{agent}` | start a fresh inbound call (Amanda) |
-| `POST /api/call/turn` `{agent, text}` | one conversational turn |
-| `POST /api/outbound` `{name, phone, problem}` | Tony places a callback |
-| `GET /api/scenarios/{key}` | fetch a scripted scenario (UI plays it) |
-| `GET /api/bookings` | confirmed bookings (in-memory) |
-| `GET /api/escalations` | escalation log |
-| `POST /telegram/webhook` | Telegram update sink |
-| `GET /admin/set-webhook` | register the Telegram webhook |
-| `GET /health` | health + integration status |
+| `GET /` | ops dashboard |
+| `GET /console` | chat console (Amanda inbound) |
+| `GET /api/config` | agents, fields, sample leads, service-area cities, integration status |
+| `POST /api/leads/simulate` `{key}` | fire one of the six pre-built sample leads |
+| `POST /api/leads/webhook` | real Yelp / Thumbtack webhook receiver |
+| `GET /api/leads`, `GET /api/leads/{id}` | recent leads + their routing decisions |
+| `GET /api/agents/status` | current idle/busy per agent |
+| `GET /api/queue` | after-hours + retry queue |
+| `GET /api/slots` | mock Google Sheet of technician slots |
+| `POST /api/vapi/start` `{lead_id}` | build inline Vapi assistant config, lock the agent |
+| `POST /api/vapi/event` `{call_id, kind, …}` | browser bridge for Vapi SDK events |
+| `POST /api/vapi/webhook` | direct webhook from Vapi (production path) |
+| `GET /api/bookings`, `GET /api/escalations` | confirmed records |
+| `POST /api/demo/reset` | wipe demo state |
+| `POST /telegram/webhook`, `GET /admin/set-webhook` | Telegram passthrough |
 
-## How the agents are wired
-
-`frontdesk/agents.py` holds the personas, the required-field schema, the
-escalation reasons, and the diagnostic-fee value pitch.
-`frontdesk/brain.py` ships the running transcript to Claude with a strict
-JSON contract — `{reply, fields, escalate, ready_to_book}` — and parses
-the result; if the LLM is unavailable the same module walks the caller
-through a deterministic version of the same flow.
-`frontdesk/pipeline.py` turns `ready_to_book` into a real booking +
-Telegram broadcast + SMS, or `escalate` into a dispatcher alert.
+---
 
 ## Built by
 
-**Waseem Iftikhar** — AI / Backend Engineer · voice receptionists, booking automation, messaging integrations.
+**Waseem Iftikhar** — AI / backend engineer · voice receptionists, lead
+automation, messaging integrations.

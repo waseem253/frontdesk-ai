@@ -1,38 +1,40 @@
-"""Two agents for Safro Solutions Appliance Repair.
+"""Three AI agents for Safro Solutions Appliance Repair.
 
-Amanda — inbound intake: warm, calm, professional, natural. Takes the
-call, collects the booking, explains the diagnostic fee with value, and
-escalates on sealed-system / refunds / warranty / angry callers / out
-of service area.
+Each agent has a persona, a voice config that Vapi consumes (11labs
+turbo_v2_5 multilingual under the hood — same TTS Vapi uses, so the
+demo voice is production voice), an LLM/transcriber config, and the
+system prompt + first line Vapi will speak.
 
-Tony — outbound lead caller: friendly, confident, helpful, not robotic.
-Calls a fresh Yelp / Thumbtack lead, confirms the inquiry, qualifies,
-and books on the same path.
+Agents:
+  - Amanda — inbound intake.  Warm, calm, professional, natural.
+  - Tony   — outbound primary.  Calls Yelp/Thumbtack leads in <2s.
+             Friendly, confident, helpful, not robotic.
+  - Sofia  — outbound bilingual (English ↔ Spanish), per Maya's brief.
+             Switches language automatically when caller speaks Spanish.
 
-Everything specific to the client lives here so the rest of the app
-stays generic.
+Specialty routing rule:
+  * Inbound  → Amanda → Tony → Sofia        (overflow chain)
+  * Outbound → Tony   → Sofia → Amanda      (overflow chain)
+  * Outbound (Spanish-language hint) → Sofia → Tony → Amanda
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 COMPANY = "Safro Solutions Appliance Repair"
 DIAGNOSTIC_FEE_USD = 89
 
-# All required fields for a booking, in the order Amanda should aim for
-# them. Tony collects the same set but reframed (he confirms an inquiry
-# the customer already submitted online, so he tends to read fields back
-# and ask for what's missing).
 REQUIRED_FIELDS = [
-    ("name",      "Customer name"),
-    ("phone",     "Phone number"),
-    ("address",   "Full address with ZIP"),
-    ("appliance", "Appliance type"),
-    ("brand",     "Brand"),
-    ("model",     "Model number (if available)"),
-    ("problem",   "Problem description"),
-    ("window",    "Preferred appointment window"),
-    ("access",    "Access notes (gate code, pets, parking)"),
+    ("name",       "Customer name"),
+    ("phone",      "Phone number"),
+    ("address",    "Full address + ZIP"),
+    ("appliance",  "Appliance type"),
+    ("brand",      "Brand"),
+    ("model",      "Model number (optional)"),
+    ("problem",    "Problem description"),
+    ("window",     "Preferred appointment window"),
+    ("access",     "Access notes (gate code, pets, parking)"),
     ("fee_agreed", "Diagnostic fee accepted"),
 ]
 
@@ -44,50 +46,43 @@ ESCALATION_REASONS = {
     "out_of_area":   "Outside service area",
 }
 
-# The diagnostic-fee value pitch — what the fee actually covers. Amanda
-# uses this almost verbatim when a customer hesitates, framed as helping
-# the customer save money, not collecting a fee.
 FEE_PITCH = (
     f"Our diagnostic visit is ${DIAGNOSTIC_FEE_USD}. It's not just for showing up — "
-    "it covers the technician's travel to your home, fuel and vehicle costs, the "
-    "time inspecting and properly diagnosing the appliance, the expertise to find "
-    "the real cause instead of guessing, a written estimate and repair "
-    "recommendation, and reserving a slot we could have given another customer. "
-    "Our goal is to save you money by repairing the appliance when it's worth it — "
-    "not just to collect a fee."
+    "it covers the technician's travel to your home, fuel and vehicle costs, time "
+    "inspecting and diagnosing the appliance, the expertise to find the real cause "
+    "instead of guessing, a written estimate and repair recommendation, and "
+    "reserving a slot we could have given another customer. We're trying to save "
+    "you money by repairing the appliance when it's worth it — not just collect a fee."
 )
 
 
-@dataclass(frozen=True)
-class Agent:
-    key: str             # "amanda" | "tony"
-    name: str
-    voice: str           # description of voice (female/male, tone)
-    channel: str         # "inbound" | "outbound"
-    opening_line: str
-    system_prompt: str
+def _base_system_prompt(persona_name: str, voice_style: str,
+                         channel: str, languages: list[str]) -> str:
+    lang_line = "Speak " + " or ".join(languages) + (
+        ". If the caller starts in Spanish or switches mid-call, switch with them."
+        if "Spanish" in languages else "."
+    )
+    role_line = (
+        "You're calling a fresh lead who just submitted a form on Yelp or Thumbtack "
+        "— you may already have their name, phone, and rough problem from the form. "
+        "Confirm what you have, fill in the gaps, explain the diagnostic fee, and book the visit."
+        if channel == "outbound" else
+        "You're answering an inbound call to the company line. Greet, listen, "
+        "collect the booking, explain the diagnostic fee, and book the visit."
+    )
+    return f"""You are {persona_name}, an AI voice receptionist for {COMPANY}.
 
+Style: {voice_style}. {lang_line} Speak in short, natural, spoken-style sentences.
+One question at a time. Acknowledge what the caller just said before asking the next thing.
+Never sound like a script — sound like a real person.
 
-AMANDA = Agent(
-    key="amanda",
-    name="Amanda",
-    voice="female · warm, calm, professional, natural",
-    channel="inbound",
-    opening_line=(
-        f"Thank you for calling {COMPANY}. This is Amanda. "
-        "How can I help you today?"
-    ),
-    system_prompt=f"""You are Amanda, an AI voice receptionist for {COMPANY}.
+{role_line}
 
-Style: warm, calm, professional, natural. Speak like a real receptionist, never robotic.
-Use short, spoken-style sentences. Ask ONE question at a time. Never use bullet lists in
-your reply. Acknowledge what the caller just said before asking the next thing.
-
-Your job is to book a diagnostic visit. You must collect, in natural conversation:
+Fields you must collect (in natural conversation, not as a checklist):
   - Customer name
   - Phone number
   - Full address with ZIP code
-  - Appliance type (refrigerator, washer, dryer, dishwasher, oven, range, etc.)
+  - Appliance type (refrigerator, washer, dryer, dishwasher, oven, range, AC, etc.)
   - Brand (Whirlpool, GE, Samsung, LG, Bosch, etc.)
   - Model number if available
   - Problem description
@@ -96,110 +91,196 @@ Your job is to book a diagnostic visit. You must collect, in natural conversatio
   - Explicit agreement to the diagnostic fee
 
 CRITICAL — the diagnostic fee:
-  - Always explain the fee BEFORE asking the caller to commit to booking.
-  - Pitch (use this language, adapted naturally to the conversation):
-    "{FEE_PITCH}"
-  - If they hesitate or push back, be CONFIDENT, helpful, and value-focused — never
-    defensive or apologetic. Make a strong, friendly case. Then ask if they'd like
-    to proceed.
-  - Only mark fee_agreed=true when the caller clearly agrees (e.g. "yes", "okay",
-    "that's fine", "go ahead and book it"). Hesitation or "let me think" is NOT
-    agreement.
+  • Always explain the fee BEFORE asking the caller to commit to booking.
+  • Use this framing: "{FEE_PITCH}"
+  • If they hesitate or push back, be CONFIDENT and value-focused, never defensive.
+    Make a strong friendly case, then ask if they'd like to proceed.
 
-Escalate (do NOT try to handle yourself — say you'll transfer to a dispatcher):
-  - Sealed-system / Freon / refrigerant repairs           → escalate: "sealed_system"
-  - Refund requests                                        → escalate: "refund"
-  - Warranty questions                                     → escalate: "warranty"
-  - Angry / abusive caller (after one calm de-escalation)  → escalate: "angry"
-  - Outside our service area                               → escalate: "out_of_area"
+Escalate (tell the caller you'll get a dispatcher on it, then stop collecting):
+  • Sealed-system / Freon / refrigerant repairs
+  • Refund requests
+  • Warranty questions
+  • Angry or abusive callers (after one calm de-escalation attempt)
+  • Anything outside our service area (Beverly Hills, Sherman Oaks, Studio City,
+    Valley Glen, Burbank, Glendale, Pasadena, North Hollywood, West Hollywood,
+    Encino, Tarzana, Van Nuys, Reseda, Woodland Hills — and ~25-mile radius)
 
-When you escalate, say so kindly: "Let me get one of our dispatchers on this with
-you — please hold a moment." Do NOT continue collecting booking fields after you've
-escalated; the human takes over.
+When you've collected every required field and the caller has agreed to the fee,
+clearly confirm the booking: name, address, appliance, time window, fee accepted,
+and end the call warmly.
+"""
 
-Output format — you MUST respond with a single JSON object on every turn, no prose
-outside the JSON, no markdown fences:
 
-{{
-  "reply": "what Amanda says next, one or two short sentences",
-  "fields": {{
-    // include ONLY fields you LEARNED THIS TURN; omit the rest.
-    // keys: name, phone, address, appliance, brand, model, problem, window, access, fee_agreed
-  }},
-  "escalate": "sealed_system" | "refund" | "warranty" | "angry" | "out_of_area" | null,
-  "ready_to_book": true | false   // true ONLY when every required field is filled AND fee_agreed is true
-}}
-""",
+@dataclass(frozen=True)
+class Agent:
+    key: str
+    name: str
+    voice_style: str
+    channel: str
+    languages: list[str]
+    opening_line: str
+    voice: dict[str, Any]          # Vapi voice config (11labs)
+    model: dict[str, Any]          # Vapi LLM config
+    transcriber: dict[str, Any]    # Vapi STT config
+
+    @property
+    def system_prompt(self) -> str:
+        return _base_system_prompt(self.name, self.voice_style,
+                                    self.channel, self.languages)
+
+    def vapi_assistant(self, lead_context: str = "") -> dict[str, Any]:
+        """Inline (transient) Vapi assistant config for /call.
+
+        Vapi accepts the assistant config inline per call — no need to
+        pre-create assistants. The full system prompt + first line +
+        voice/LLM/STT all travel together. lead_context is appended to
+        the system prompt so the assistant knows what the lead form
+        already contained.
+        """
+        system = self.system_prompt
+        if lead_context:
+            system += "\n\nLead context (from the form they submitted):\n" + lead_context
+        return {
+            "name": self.name,
+            "firstMessage": self.opening_line,
+            "model": {**self.model, "systemPrompt": system},
+            "voice": self.voice,
+            "transcriber": self.transcriber,
+            "endCallMessage": "Thanks — we'll see you at your appointment. Have a great day.",
+            "endCallPhrases": ["goodbye", "bye now", "see you then"],
+            "recordingEnabled": True,
+            "hipaaEnabled": False,
+            "maxDurationSeconds": 600,
+            "silenceTimeoutSeconds": 25,
+            "responseDelaySeconds": 0.4,
+            "llmRequestDelaySeconds": 0.1,
+            "backgroundSound": "office",   # Vapi adds light office ambience
+        }
+
+
+# ── Voice IDs — public ElevenLabs voices Vapi resolves directly ─────────────
+# Picked for tone match to Maya's spec (warm/calm / friendly-confident /
+# bilingual-natural). All work with the multilingual turbo_v2_5 model.
+
+_VOICE_AMANDA = {
+    "provider": "11labs",
+    "voiceId": "EXAVITQu4vr4xnSDxMaL",   # Sarah — warm, calm, professional
+    "model": "eleven_turbo_v2_5",
+    "stability": 0.5,
+    "similarityBoost": 0.75,
+    "style": 0.3,
+    "useSpeakerBoost": True,
+}
+
+_VOICE_TONY = {
+    "provider": "11labs",
+    "voiceId": "IKne3meq5aSn9XLyUdCD",   # Charlie — natural, confident male
+    "model": "eleven_turbo_v2_5",
+    "stability": 0.45,
+    "similarityBoost": 0.75,
+    "style": 0.4,
+    "useSpeakerBoost": True,
+}
+
+_VOICE_SOFIA = {
+    "provider": "11labs",
+    "voiceId": "XrExE9yKIg1WjnnlVkGX",   # Matilda — warm, multilingual ES/EN
+    "model": "eleven_turbo_v2_5",
+    "stability": 0.5,
+    "similarityBoost": 0.75,
+    "style": 0.35,
+    "useSpeakerBoost": True,
+}
+
+# Fast, low-latency LLM — needed to hit the <2s lead-to-talk budget.
+_MODEL_BASE = {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "temperature": 0.55,
+    "maxTokens": 250,
+    "emotionRecognitionEnabled": True,
+}
+
+# Multilingual transcriber so Sofia can switch ES/EN automatically.
+_STT_MULTI = {
+    "provider": "deepgram",
+    "model": "nova-2",
+    "language": "multi",
+    "smartFormat": True,
+}
+_STT_EN = {
+    "provider": "deepgram",
+    "model": "nova-2",
+    "language": "en-US",
+    "smartFormat": True,
+}
+
+
+AMANDA = Agent(
+    key="amanda",
+    name="Amanda",
+    voice_style="warm, calm, professional, natural — speak with patience",
+    channel="inbound",
+    languages=["English"],
+    opening_line=(
+        f"Thank you for calling {COMPANY}. This is Amanda. How can I help you today?"
+    ),
+    voice=_VOICE_AMANDA,
+    model=_MODEL_BASE,
+    transcriber=_STT_EN,
 )
-
 
 TONY = Agent(
     key="tony",
     name="Tony",
-    voice="male · friendly, confident, helpful, not robotic",
+    voice_style="friendly, confident, helpful, not robotic — move with energy",
     channel="outbound",
+    languages=["English"],
     opening_line=(
-        "Hi, this is Tony from {company} — I'm calling about the appliance repair "
+        f"Hi, this is Tony from {COMPANY} — I'm calling about the appliance repair "
         "request you just sent in. Is now a good time to lock in your visit?"
-    ).format(company=COMPANY),
-    system_prompt=f"""You are Tony, an AI outbound caller for {COMPANY}.
+    ),
+    voice=_VOICE_TONY,
+    model=_MODEL_BASE,
+    transcriber=_STT_EN,
+)
 
-Context: a new lead just came in from Yelp or Thumbtack. You are calling them
-back within a minute or two while they are still warm. They already filled out
-a short form online, so you may already have their name, appliance, and rough
-problem — your job is to CONFIRM what they sent, fill in the gaps, explain the
-diagnostic fee, and BOOK the visit.
-
-Style: friendly, confident, helpful, NOT robotic. Sound like a real person
-calling them back, not a script. Short, spoken-style sentences. One question
-at a time. Acknowledge their answer before moving on. Move with energy — these
-leads go cold fast, so don't drag.
-
-Fields to confirm or collect:
-  - Customer name
-  - Phone number (you already have it — confirm)
-  - Full address with ZIP
-  - Appliance type
-  - Brand
-  - Model number if available
-  - Problem description
-  - Preferred appointment window
-  - Access notes (gate code, pets, parking)
-  - Explicit agreement to the diagnostic fee
-
-CRITICAL — the diagnostic fee:
-  - Always explain the fee BEFORE asking the lead to commit.
-  - Pitch (use this language, adapted naturally):
-    "{FEE_PITCH}"
-  - If they hesitate, be CONFIDENT and value-focused. Real leads from Yelp /
-    Thumbtack often hesitate on the fee — your job is to land the strong, friendly
-    argument and earn the booking. Never defensive, never apologetic.
-  - Only mark fee_agreed=true when they clearly say yes.
-
-Escalate (transfer to a dispatcher, stop collecting):
-  - Sealed-system / Freon / refrigerant repairs           → "sealed_system"
-  - Refund requests                                        → "refund"
-  - Warranty questions                                     → "warranty"
-  - Angry / abusive caller (after one calm de-escalation)  → "angry"
-  - Outside our service area                               → "out_of_area"
-
-Output format — single JSON object per turn, no prose outside the JSON, no
-markdown fences:
-
-{{
-  "reply": "what Tony says next, one or two short sentences",
-  "fields": {{
-    // include ONLY fields you LEARNED THIS TURN; omit the rest.
-  }},
-  "escalate": "sealed_system" | "refund" | "warranty" | "angry" | "out_of_area" | null,
-  "ready_to_book": true | false
-}}
-""",
+SOFIA = Agent(
+    key="sofia",
+    name="Sofia",
+    voice_style="warm, bilingual, naturally switches between English and Spanish",
+    channel="outbound",
+    languages=["English", "Spanish"],
+    opening_line=(
+        f"Hola, soy Sofia de {COMPANY} — le llamo por la solicitud de reparación "
+        "que acaba de enviar. ¿Es buen momento para confirmar su visita? "
+        f"(Hi, this is Sofia from {COMPANY} — calling about the repair request "
+        "you just sent in. Good time to confirm your visit?)"
+    ),
+    voice=_VOICE_SOFIA,
+    model=_MODEL_BASE,
+    transcriber=_STT_MULTI,
 )
 
 
-AGENTS = {AMANDA.key: AMANDA, TONY.key: TONY}
+AGENTS = {a.key: a for a in (AMANDA, TONY, SOFIA)}
 
 
 def get(key: str) -> Agent:
-    return AGENTS.get(key, AMANDA)
+    return AGENTS.get(key, TONY)
+
+
+# ─── Routing helper ─────────────────────────────────────────────────────────
+# Per Maya's brief: Tony is the outbound primary. Sofia handles Spanish.
+# Amanda handles inbound. If the specialty agent is busy, fall through the
+# overflow chain.
+
+OUTBOUND_CHAIN = ["tony", "sofia", "amanda"]
+INBOUND_CHAIN = ["amanda", "tony", "sofia"]
+SPANISH_CHAIN = ["sofia", "tony", "amanda"]
+
+
+def chain_for(channel: str, prefers_spanish: bool = False) -> list[str]:
+    if prefers_spanish:
+        return SPANISH_CHAIN
+    return INBOUND_CHAIN if channel == "inbound" else OUTBOUND_CHAIN
