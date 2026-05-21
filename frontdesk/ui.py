@@ -621,22 +621,31 @@ async function startVapiCall(start){
 }
 
 function wireVapi(){
-  vapi.on("call-start", () => {
-    document.getElementById("liveStat").innerHTML = '<span class="rd"></span> in call';
-    postEvent({kind:"in_progress"});
-  });
-  vapi.on("call-end", () => {
+  let ENDED = false;
+  let CALL_STARTED_AT = 0;
+  function finalize(reason){
+    if (ENDED) return;     // call-end + ejection may both fire — handle once
+    ENDED = true;
+    const dur = CALL_STARTED_AT ? Math.round((Date.now() - CALL_STARTED_AT)/1000) : 0;
     document.getElementById("liveStat").innerHTML = '<span class="rd"></span> parsing transcript…';
-    addLine("system", "Call ended. Parsing transcript for booking…");
-    // Ship the FULL transcript in one shot — Vercel serverless instances
-    // don't share in-memory state, so per-chunk posts may not survive to
-    // the call-end handler. Belt-and-braces: send the whole text here.
+    addLine("system", `Call ended (${reason}, duration ${dur}s, transcript chunks: ${CURRENT_TRANSCRIPT.length}). Parsing for booking…`);
     const fullTranscript = CURRENT_TRANSCRIPT.join("\n");
     postEvent({kind:"ended", outcome:"answered", transcript: fullTranscript}).then(j => {
       handleFinalize(j);
       loadBookings(); refreshAgents(); loadSheet();
     });
+  }
+  vapi.on("call-start", (e) => {
+    ENDED = false;
+    CALL_STARTED_AT = Date.now();
+    console.log("[vapi] call-start", e);
+    document.getElementById("liveStat").innerHTML = '<span class="rd"></span> in call';
+    addLine("system", "Call connected — Tony should start speaking now.");
+    postEvent({kind:"in_progress"});
   });
+  vapi.on("call-end", (e) => { console.log("[vapi] call-end", e); finalize("call-end"); });
+  vapi.on("speech-start", () => console.log("[vapi] speech-start"));
+  vapi.on("speech-end",   () => console.log("[vapi] speech-end"));
   vapi.on("message", (msg) => {
     if (msg.type === "transcript" && msg.transcriptType === "final"){
       const role = msg.role === "user" ? "you" : "bot";
@@ -647,7 +656,17 @@ function wireVapi(){
     }
   });
   vapi.on("error", (e) => {
-    addLine("system", "Vapi error: " + (e?.message || JSON.stringify(e)));
+    // Vapi's SDK reports normal agent-initiated end-call as an ERROR event
+    // with `error.type === "ejected"` and `errorMsg === "Meeting has ended"`.
+    // Treat that as a normal call-end so the transcript still gets parsed.
+    const raw = e?.errorMsg || e?.message || (e?.error && (e.error.message || JSON.stringify(e.error))) || JSON.stringify(e || {});
+    const isEnd = /ejected|meeting has ended|meeting is ended/i.test(raw) || e?.error?.type === "ejected";
+    if (isEnd){
+      finalize("ejected");
+      return;
+    }
+    console.warn("[vapi] error event:", e);
+    addLine("system", "Vapi error: " + raw);
   });
 }
 
