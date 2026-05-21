@@ -63,51 +63,57 @@ def _base_system_prompt(persona_name: str, voice_style: str,
         if "Spanish" in languages else "."
     )
     role_line = (
-        "You're calling a fresh lead who just submitted a form on Yelp or Thumbtack "
-        "— you may already have their name, phone, and rough problem from the form. "
-        "Confirm what you have, fill in the gaps, explain the diagnostic fee, and book the visit."
+        "You're calling a fresh lead who just submitted a form on Yelp or Thumbtack — "
+        "you already have their name, phone and rough problem from the form. Confirm "
+        "what you have ONCE, fill in the gaps, explain the diagnostic fee, and book the visit."
         if channel == "outbound" else
-        "You're answering an inbound call to the company line. Greet, listen, "
-        "collect the booking, explain the diagnostic fee, and book the visit."
+        "You're answering an inbound call. Greet, listen, collect the booking, "
+        "explain the diagnostic fee, and book the visit."
     )
     return f"""You are {persona_name}, an AI voice receptionist for {COMPANY}.
 
 Style: {voice_style}. {lang_line} Speak in short, natural, spoken-style sentences.
-One question at a time. Acknowledge what the caller just said before asking the next thing.
-Never sound like a script — sound like a real person.
+Sound like a real person, not a script.
+
+EFFICIENCY RULES — these are critical:
+  • One short question at a time.
+  • Acknowledge each answer with 1–3 words ("got it", "okay", "thanks"), then move on.
+  • Do NOT repeat back what the customer said unless they actually asked you to confirm.
+  • Do NOT summarize multiple times — exactly ONE final confirmation at the end.
+  • Skip optional fields (model number, access notes) if the customer doesn't have them.
+  • The company name is spelled S-A-F-R-O (Safro), not Sephora. Pronounce it "SAF-roh".
 
 {role_line}
 
-Fields you must collect (in natural conversation, not as a checklist):
-  - Customer name
-  - Phone number
-  - Full address with ZIP code
-  - Appliance type (refrigerator, washer, dryer, dishwasher, oven, range, AC, etc.)
-  - Brand (Whirlpool, GE, Samsung, LG, Bosch, etc.)
-  - Model number if available
-  - Problem description
-  - Preferred appointment window
-  - Access notes (gate code, pets, parking)
-  - Explicit agreement to the diagnostic fee
+Collect, in this order (skip anything that's already on the form):
+  1. Full address with ZIP
+  2. Appliance type + brand (e.g., "GE dryer")
+  3. Model number (skip if not handy)
+  4. Brief problem description
+  5. Preferred appointment window — offer 2–3 of the slots in the live availability
+  6. Access notes (gate code, pets, parking) — quick, skip if none
+  7. Diagnostic fee — explain and ask for agreement (see below)
 
-CRITICAL — the diagnostic fee:
-  • Always explain the fee BEFORE asking the caller to commit to booking.
-  • Use this framing: "{FEE_PITCH}"
-  • If they hesitate or push back, be CONFIDENT and value-focused, never defensive.
-    Make a strong friendly case, then ask if they'd like to proceed.
+DIAGNOSTIC FEE (most important moment):
+  • Explain the fee BEFORE asking them to commit.
+  • Framing: "{FEE_PITCH}"
+  • If they push back, be confident and value-focused — never defensive. One strong, friendly argument, then ask if they'd like to proceed.
 
-Escalate (tell the caller you'll get a dispatcher on it, then stop collecting):
+ESCALATE (tell them you'll get a dispatcher, then STOP collecting and end the call):
   • Sealed-system / Freon / refrigerant repairs
   • Refund requests
   • Warranty questions
-  • Angry or abusive callers (after one calm de-escalation attempt)
+  • Angry or abusive callers (one calm attempt, then transfer)
   • Anything outside our service area (Beverly Hills, Sherman Oaks, Studio City,
     Valley Glen, Burbank, Glendale, Pasadena, North Hollywood, West Hollywood,
-    Encino, Tarzana, Van Nuys, Reseda, Woodland Hills — and ~25-mile radius)
+    Encino, Tarzana, Van Nuys, Reseda, Woodland Hills — ~25 mi radius)
 
-When you've collected every required field and the caller has agreed to the fee,
-clearly confirm the booking: name, address, appliance, time window, fee accepted,
-and end the call warmly.
+ENDING THE CALL — you MUST do this:
+  Once the customer has agreed to the fee, give exactly ONE concise confirmation
+  in this shape: "Perfect — you're booked for [day window] at [address]. We've got
+  [technician name] coming for the [appliance]. We'll send a text confirmation.
+  Have a great day, goodbye."
+  Then STOP TALKING. Do not repeat the confirmation. The call ends on "goodbye".
 """
 
 
@@ -143,18 +149,24 @@ class Agent:
         return {
             "name": self.name,
             "firstMessage": self.opening_line,
-            "model": {**self.model, "systemPrompt": system},
+            "model": {**self.model, "messages": [{"role": "system", "content": system}]},
             "voice": self.voice,
             "transcriber": self.transcriber,
-            "endCallMessage": "Thanks — we'll see you at your appointment. Have a great day.",
-            "endCallPhrases": ["goodbye", "bye now", "see you then"],
+            "endCallMessage": "Have a great day, goodbye.",
+            "endCallPhrases": [
+                "goodbye", "bye", "bye now", "see you then", "see you tomorrow",
+                "have a great day", "have a wonderful day", "have a good day",
+                "take care", "talk to you soon",
+            ],
+            "endCallFunctionEnabled": True,
             "recordingEnabled": True,
             "hipaaEnabled": False,
             "maxDurationSeconds": 600,
-            "silenceTimeoutSeconds": 25,
-            "responseDelaySeconds": 0.4,
+            "silenceTimeoutSeconds": 30,
+            "responseDelaySeconds": 0.3,
             "llmRequestDelaySeconds": 0.1,
             "backgroundSound": "office",   # Vapi adds light office ambience
+            "backchannelingEnabled": True, # natural "mhm" / "got it" cadence
         }
 
 
@@ -201,18 +213,30 @@ _MODEL_BASE = {
     "emotionRecognitionEnabled": True,
 }
 
+# Keywords boost Deepgram recognition of brand-specific terms so the
+# customer doesn't hear "Sephora Solutions" when the agent says "Safro".
+# Format: "WORD:BOOST" where higher boost = more confident match.
+_STT_KEYWORDS = [
+    "Safro:5", "Safro Solutions:5", "Safro Solutions Appliance Repair:3",
+    "Whirlpool:3", "Bosch:3", "Maytag:3", "Frigidaire:3", "Kenmore:3",
+    "GE:2", "LG:2", "Samsung:2", "Amana:3",
+    "diagnostic:3", "appliance:2",
+]
+
 # Multilingual transcriber so Sofia can switch ES/EN automatically.
 _STT_MULTI = {
     "provider": "deepgram",
     "model": "nova-2",
     "language": "multi",
     "smartFormat": True,
+    "keywords": _STT_KEYWORDS,
 }
 _STT_EN = {
     "provider": "deepgram",
     "model": "nova-2",
     "language": "en-US",
     "smartFormat": True,
+    "keywords": _STT_KEYWORDS,
 }
 
 

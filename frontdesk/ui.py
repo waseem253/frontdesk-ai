@@ -595,8 +595,10 @@ function wireVapi(){
     postEvent({kind:"in_progress"});
   });
   vapi.on("call-end", () => {
-    document.getElementById("liveStat").textContent = "call ended";
-    postEvent({kind:"ended", outcome:"answered"}).then(() => {
+    document.getElementById("liveStat").innerHTML = '<span class="rd"></span> parsing transcript…';
+    addLine("system", "Call ended. Parsing transcript for booking…");
+    postEvent({kind:"ended", outcome:"answered"}).then(j => {
+      handleFinalize(j);
       loadBookings(); refreshAgents(); loadSheet();
     });
   });
@@ -612,20 +614,48 @@ function wireVapi(){
   });
 }
 
+function handleFinalize(resp){
+  const fz = resp && resp.finalize;
+  if (!fz){ document.getElementById("liveStat").textContent = "call ended"; return; }
+  const a = fz.action;
+  if (a === "booked"){
+    const b = fz.booking;
+    document.getElementById("liveStat").innerHTML = '✅ booking confirmed';
+    addLine("system", `✓ Booking saved · Ref ${b.id} · ${b.name} · ${b.window || '(no window)'}`);
+  } else if (a === "escalation"){
+    document.getElementById("liveStat").innerHTML = '⚠ escalated';
+    addLine("system", "⚠ " + (fz.message || "escalation"));
+  } else if (a === "not_booked"){
+    document.getElementById("liveStat").innerHTML = '— no booking saved';
+    addLine("system", fz.message || "Couldn't book — review transcript.");
+    addLine("system", "Captured fields: " + Object.entries(fz.fields || {})
+      .filter(([k,v]) => v).map(([k,v]) => `${k}=${v}`).join(", ") + ".");
+  } else if (a === "parse_failed"){
+    document.getElementById("liveStat").innerHTML = '⚠ parse failed';
+    addLine("system", fz.message || "Transcript parse failed.");
+  } else {
+    document.getElementById("liveStat").textContent = "call ended";
+  }
+}
+
 function postEvent(ev){
-  if (!CURRENT_CALL) return Promise.resolve();
+  if (!CURRENT_CALL) return Promise.resolve(null);
   return fetch("/api/vapi/event", {
     method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({call_id: CURRENT_CALL.call_id, ...ev}),
-  }).catch(() => {});
+  }).then(r => r.json()).catch(() => null);
 }
 
 function endCallManual(){
   if (vapi){ try { vapi.stop(); } catch(e){} }
-  if (CURRENT_CALL) postEvent({kind:"ended", outcome:"answered"}).then(() => {
-    loadBookings(); refreshAgents();
-  });
-  document.getElementById("liveStat").textContent = "call ended";
+  document.getElementById("liveStat").innerHTML = '<span class="rd"></span> parsing transcript…';
+  addLine("system", "Call ended manually. Parsing transcript for booking…");
+  if (CURRENT_CALL){
+    postEvent({kind:"ended", outcome:"answered"}).then(j => {
+      handleFinalize(j);
+      loadBookings(); refreshAgents(); loadSheet();
+    });
+  }
 }
 
 function testRespond(){

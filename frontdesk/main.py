@@ -343,6 +343,8 @@ def vapi_event(r: VapiEventReq) -> dict:
         set_agent_status(c.agent_key, "idle")
         record_attempt(c.lead_id, outcome, c.agent_key)
 
+        finalize_result: dict = {}
+
         # If the call didn't actually connect → schedule retry.
         if outcome in ("no_answer", "busy", "failed"):
             attempts = sum(
@@ -352,21 +354,33 @@ def vapi_event(r: VapiEventReq) -> dict:
             )
             schedule_retry(c.lead_id, f"retry call to lead {c.lead_id}",
                            attempts_so_far=attempts)
+            finalize_result = {"action": "retry_scheduled"}
         elif outcome == "answered":
             # Parse the transcript into a booking record (Anthropic). The
             # transcript is preferred from the explicit field; fall back to
             # the streamed chunks the browser bridge already saved.
             text = r.transcript or transcript_text_of(c.transcript)
-            _finalize_call(c, text)
+            print(f"[finalize] call={r.call_id} transcript_len={len(text)}")
+            finalize_result = _finalize_call(c, text)
+        return {"ok": True, "call": call_snapshot(r.call_id),
+                "finalize": finalize_result}
     return {"ok": True, "call": call_snapshot(r.call_id)}
 
 
-def _finalize_call(call: CallRecord, transcript_text: str) -> None:
+def _finalize_call(call: CallRecord, transcript_text: str) -> dict:
     """Run Anthropic transcript-parse, write Booking + send confirmations
-    OR log escalation. Best-effort — failures don't break the demo."""
+    OR log escalation. Returns a dict the UI can render so the user sees
+    exactly what happened on the server (booked / parse_failed / missing fields)."""
+    if not transcript_text.strip():
+        return {"action": "no_transcript",
+                "message": "Call ended with no transcript captured."}
+
     parsed = parse_transcript(transcript_text)
     if not parsed:
-        return
+        return {"action": "parse_failed",
+                "message": "Couldn't parse the transcript (LLM unavailable or invalid output). "
+                           "Telegram/booking skipped."}
+
     if parsed.get("escalation"):
         from .agents import ESCALATION_REASONS
         reason = parsed["escalation"]
@@ -378,10 +392,27 @@ def _finalize_call(call: CallRecord, transcript_text: str) -> None:
             f"Lead: {call.lead_id}\n"
             f"Route to dispatcher."
         )
-        return
-    if not parsed.get("booked"):
-        return
+        return {"action": "escalation", "reason": reason,
+                "message": f"Escalated: {ESCALATION_REASONS.get(reason, reason)}"}
+
     fields = parsed.get("fields", {}) or {}
+
+    if not parsed.get("booked"):
+        from .transcript import _REQUIRED_FOR_BOOK
+        missing = [k for k in _REQUIRED_FOR_BOOK
+                   if k != "fee_agreed" and not str(fields.get(k, "")).strip()]
+        fee = bool(fields.get("fee_agreed", False))
+        return {
+            "action": "not_booked",
+            "fields": fields,
+            "missing_required": missing,
+            "fee_agreed": fee,
+            "message": (
+                f"Parsed the call but didn't create a booking. "
+                f"Missing required: {missing or 'none'}. fee_agreed={fee}."
+            ),
+        }
+
     bid = f"bk_{int(time.time() * 1000) % 10_000_000:x}"
     b = Booking(
         id=bid, caller=call.lead_id, agent=call.agent_key,
@@ -408,7 +439,7 @@ def _finalize_call(call: CallRecord, transcript_text: str) -> None:
         except Exception:
             pass
 
-    broadcast_booking(
+    tg = broadcast_booking(
         f"📞 New booking — {COMPANY}\n"
         f"Agent: {AGENTS[call.agent_key].name}\n"
         f"Customer: {b.name}\n"
@@ -420,10 +451,14 @@ def _finalize_call(call: CallRecord, transcript_text: str) -> None:
         f"Access: {b.access or '—'}\n"
         f"Fee accepted: yes · Ref: {b.id}"
     )
+    sms_result = "skipped"
     if b.phone:
-        send_sms(b.phone,
+        sms_result = send_sms(b.phone,
                   f"{COMPANY}: you're booked for {b.window}. "
                   f"Diagnostic fee ${DIAGNOSTIC_FEE_USD} accepted. Ref {b.id}.")
+    return {"action": "booked", "booking": b.__dict__,
+            "telegram": tg, "sms": sms_result,
+            "message": f"Booking created — ref {b.id}"}
 
 
 @app.post("/api/vapi/webhook")
