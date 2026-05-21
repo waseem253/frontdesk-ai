@@ -266,6 +266,11 @@ def _alert_lead(rec: LeadRecord, decision, label: str) -> None:
 
 class VapiStartReq(BaseModel):
     lead_id: str
+    # Optional inline payload — Vercel serverless cold starts wipe the
+    # in-memory `_leads` dict between requests, so the browser also passes
+    # the lead/decision back. Whichever path has the data wins.
+    lead: Optional[dict] = None
+    decision: Optional[dict] = None
 
 
 @app.post("/api/vapi/start")
@@ -273,23 +278,52 @@ def vapi_start(r: VapiStartReq) -> dict:
     """Return the inline Vapi assistant config so the browser SDK can start
     the call. Marks the chosen agent BUSY for the duration."""
     rec = get_lead(r.lead_id)
-    if not rec:
-        return JSONResponse({"error": "unknown lead"}, status_code=404)
-    decision = rec.decision
-    if decision.get("action") != "call" or not decision.get("agent_key"):
-        return JSONResponse({"error": "no call action for this lead"}, status_code=400)
-    agent = AGENTS[decision["agent_key"]]
-
-    lead = Lead(
-        source=rec.source, external_id=r.lead_id, received_at=rec.received_at,
-        customer_first_name=rec.customer_name.split(" ")[0] if rec.customer_name else "",
-        customer_last_name=" ".join(rec.customer_name.split(" ")[1:]) if rec.customer_name else "",
-        phone=rec.phone, city=rec.city,
-        appliance_hint=rec.appliance_hint, language_hint=rec.language,
-        consent_call=rec.consent,
+    decision = rec.decision if rec else (r.decision or {})
+    lead_payload = (None if rec else r.lead) or (
+        {"source": rec.source, "name": rec.customer_name, "phone": rec.phone,
+         "city": rec.city, "appliance_hint": rec.appliance_hint,
+         "language": rec.language, "consent": rec.consent} if rec else None
     )
-    assistant = web_call_config(agent, lead)
 
+    if not decision or decision.get("action") != "call" or not decision.get("agent_key"):
+        return JSONResponse(
+            {"error": "no call action for this lead",
+             "have_rec": bool(rec), "have_inline": bool(r.decision)},
+            status_code=400,
+        )
+    if not lead_payload:
+        return JSONResponse(
+            {"error": "no lead payload (server has no memory of lead_id and "
+                       "browser didn't pass one inline)"},
+            status_code=400,
+        )
+
+    agent = AGENTS[decision["agent_key"]]
+    name = lead_payload.get("name") or ""
+    parts = name.split(" ", 1)
+    lead = Lead(
+        source=lead_payload.get("source", "yelp"), external_id=r.lead_id,
+        received_at=time.time(),
+        customer_first_name=parts[0] if parts else "",
+        customer_last_name=parts[1] if len(parts) > 1 else "",
+        phone=lead_payload.get("phone"),
+        city=lead_payload.get("city", ""),
+        appliance_hint=lead_payload.get("appliance_hint", ""),
+        language_hint=lead_payload.get("language", "en"),
+        consent_call=bool(lead_payload.get("consent", True)),
+    )
+
+    # If the server didn't have the lead in memory, add it now so subsequent
+    # calls on this warm instance find it.
+    if not rec:
+        add_lead(LeadRecord(
+            lead_id=r.lead_id, source=lead.source, received_at=lead.received_at,
+            customer_name=name or "(no name)", phone=lead.phone, city=lead.city,
+            appliance_hint=lead.appliance_hint, language=lead.language_hint,
+            consent=lead.consent_call, decision=decision,
+        ))
+
+    assistant = web_call_config(agent, lead)
     call_id = f"cl_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
     add_call(CallRecord(
         call_id=call_id, lead_id=r.lead_id, agent_key=agent.key,
@@ -317,6 +351,11 @@ class VapiEventReq(BaseModel):
     vapi_call_id: Optional[str] = None
     outcome: Optional[str] = None
     transcript: Optional[str] = None
+    # Cold-start recovery — the browser passes these so we can recreate
+    # call + lead state on a fresh serverless instance.
+    agent_key: Optional[str] = None
+    lead_id: Optional[str] = None
+    lead: Optional[dict] = None
 
 
 @app.post("/api/vapi/event")
@@ -328,7 +367,29 @@ def vapi_event(r: VapiEventReq) -> dict:
     """
     c = get_call(r.call_id)
     if not c:
-        return JSONResponse({"error": "unknown call"}, status_code=404)
+        # Cold start — rehydrate from inline payload if the browser sent one.
+        if r.agent_key and r.lead_id:
+            c = CallRecord(call_id=r.call_id, lead_id=r.lead_id,
+                            agent_key=r.agent_key, started_at=time.time(),
+                            status="initiating")
+            add_call(c)
+            if r.lead and not get_lead(r.lead_id):
+                add_lead(LeadRecord(
+                    lead_id=r.lead_id,
+                    source=r.lead.get("source", "yelp"),
+                    received_at=time.time(),
+                    customer_name=r.lead.get("name") or "(no name)",
+                    phone=r.lead.get("phone"),
+                    city=r.lead.get("city", ""),
+                    appliance_hint=r.lead.get("appliance_hint", ""),
+                    language=r.lead.get("language", "en"),
+                    consent=bool(r.lead.get("consent", True)),
+                ))
+        else:
+            return JSONResponse({"error": "unknown call",
+                                 "hint": "browser must include agent_key + lead_id "
+                                          "on the ended event for cold-start recovery"},
+                                status_code=404)
 
     if r.kind == "transcript" and r.text:
         append_transcript(r.call_id, r.role or "assistant", r.text)

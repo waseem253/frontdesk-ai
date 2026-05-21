@@ -439,7 +439,18 @@ async function fireLead(key){
   CURRENT_LEAD = r;
   await animateDecision(r);
   if (r.decision.action === "call"){
-    const start = await api("/api/vapi/start", {lead_id: r.lead_id});
+    // Always pass lead + decision inline so the next request survives a
+    // Vercel cold start (in-memory state isn't shared across instances).
+    const start = await api("/api/vapi/start", {
+      lead_id: r.lead_id,
+      lead: r.lead,
+      decision: r.decision,
+    });
+    if (!start || !start.agent){
+      addLine("system", "Couldn't start call: " + JSON.stringify(start || "(no response)"));
+      document.querySelectorAll("#leads .scn").forEach(b => b.disabled = false);
+      return;
+    }
     CURRENT_CALL = start;
     await startVapiCall(start);
   }
@@ -662,9 +673,16 @@ function handleFinalize(resp){
 
 function postEvent(ev){
   if (!CURRENT_CALL) return Promise.resolve(null);
+  const body = {
+    call_id: CURRENT_CALL.call_id,
+    agent_key: CURRENT_CALL.agent?.key,
+    lead_id: CURRENT_LEAD?.lead_id,
+    lead: CURRENT_LEAD?.lead,
+    ...ev,
+  };
   return fetch("/api/vapi/event", {
     method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({call_id: CURRENT_CALL.call_id, ...ev}),
+    body: JSON.stringify(body),
   }).then(r => r.json()).catch(() => null);
 }
 
