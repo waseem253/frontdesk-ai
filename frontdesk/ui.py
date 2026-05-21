@@ -546,20 +546,29 @@ async function startVapiCall(start){
   }
 
   try {
-    // Vapi's @vapi-ai/web ships ESM-only. Load it via the +esm
-    // CDN transform so it runs in the browser without a bundler.
+    // Vapi's @vapi-ai/web ships ESM-only and some CDNs double-wrap the
+    // default export. Try a few candidate paths and CDNs.
     if (!window.__VapiCtor){
       addLine("system", "Loading Vapi SDK…");
-      const mod = await import("https://cdn.jsdelivr.net/npm/@vapi-ai/web@latest/+esm");
-      window.__VapiCtor = mod.default || mod.Vapi || mod;
-      if (typeof window.__VapiCtor !== "function"){
-        addLine("system",
-          "Vapi SDK loaded but no constructor exported — likely a CDN/version mismatch. " +
-          "Open DevTools → console and check for errors. Module keys: " +
-          Object.keys(mod || {}).join(", "));
+      const cdns = [
+        "https://esm.sh/@vapi-ai/web@latest",
+        "https://cdn.jsdelivr.net/npm/@vapi-ai/web@latest/+esm",
+        "https://cdn.skypack.dev/@vapi-ai/web",
+      ];
+      let lastErr = null;
+      for (const url of cdns){
+        try {
+          const mod = await import(url);
+          const ctor = _resolveCtor(mod);
+          if (ctor){ window.__VapiCtor = ctor; break; }
+          lastErr = "no constructor in " + url + " · keys=" + _keys(mod);
+        } catch (e){ lastErr = url + " → " + (e?.message || e); }
+      }
+      if (!window.__VapiCtor){
+        addLine("system", "Couldn't load Vapi SDK from any CDN. " + (lastErr || ""));
+        document.getElementById("liveStat").textContent = "sdk load failed";
         return;
       }
-      // Clear the "loading…" line.
       tr.innerHTML = "";
     }
     if (!vapi){
@@ -733,6 +742,22 @@ async function api(path, body){
   return r.json();
 }
 function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+function _resolveCtor(m){
+  // Try common export shapes from CJS→ESM transforms.
+  const candidates = [
+    m,
+    m?.default,
+    m?.default?.default,
+    m?.Vapi,
+    m?.default?.Vapi,
+  ];
+  for (const c of candidates){
+    if (typeof c === "function") return c;
+  }
+  return null;
+}
+function _keys(o){ try { return Object.keys(o||{}).join(","); } catch(e){ return "?"; } }
 function loadScript(src){
   return new Promise((res, rej) => {
     const s = document.createElement("script");
