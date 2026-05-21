@@ -545,18 +545,38 @@ async function startVapiCall(start){
     return;
   }
 
-  // Lazy-load the Vapi web SDK from CDN.
-  if (!window.Vapi){
-    await loadScript("https://cdn.jsdelivr.net/npm/@vapi-ai/web@latest/dist/index.js");
-  }
-  if (!vapi){
-    vapi = new window.Vapi(start.public_key);
-    wireVapi();
-  }
   try {
+    // Vapi's @vapi-ai/web ships ESM-only. Load it via the +esm
+    // CDN transform so it runs in the browser without a bundler.
+    if (!window.__VapiCtor){
+      addLine("system", "Loading Vapi SDK…");
+      const mod = await import("https://cdn.jsdelivr.net/npm/@vapi-ai/web@latest/+esm");
+      window.__VapiCtor = mod.default || mod.Vapi || mod;
+      if (typeof window.__VapiCtor !== "function"){
+        addLine("system",
+          "Vapi SDK loaded but no constructor exported — likely a CDN/version mismatch. " +
+          "Open DevTools → console and check for errors. Module keys: " +
+          Object.keys(mod || {}).join(", "));
+        return;
+      }
+      // Clear the "loading…" line.
+      tr.innerHTML = "";
+    }
+    if (!vapi){
+      vapi = new window.__VapiCtor(start.public_key);
+      wireVapi();
+    }
+    document.getElementById("liveStat").innerHTML = '<span class="rd"></span> requesting mic…';
     await vapi.start(start.assistant);
   } catch (e){
-    addLine("system", "Vapi start error: " + (e?.message || e));
+    const msg = e?.message || String(e);
+    addLine("system", "Vapi error: " + msg);
+    if (/permission|denied|NotAllowed/i.test(msg)){
+      addLine("system",
+        "Looks like the browser blocked mic access. Click the 🔒 / 🎤 icon in the URL bar → " +
+        "Allow microphone for this site → reload the page → fire the lead again.");
+    }
+    document.getElementById("liveStat").textContent = "call failed";
   }
 }
 
