@@ -577,7 +577,21 @@ async function startVapiCall(start){
       vapi = new window.__VapiCtor(start.public_key);
       wireVapi();
     }
+    // Pre-warm mic permission BEFORE vapi.start so the browser prompt
+    // appears immediately, not after Vapi's WebSocket negotiation (which
+    // adds 3-4s of dead air for the user the first time around).
     document.getElementById("liveStat").innerHTML = '<span class="rd"></span> requesting mic…';
+    try {
+      const probe = await navigator.mediaDevices.getUserMedia({audio: true});
+      probe.getTracks().forEach(t => t.stop());   // Vapi will reacquire silently
+    } catch (e){
+      addLine("system",
+        "Browser denied mic access. Click the 🎤 / 🔒 icon in the URL bar → Allow " +
+        "microphone for this site → reload → fire the lead again.");
+      document.getElementById("liveStat").textContent = "mic denied";
+      return;
+    }
+    document.getElementById("liveStat").innerHTML = '<span class="rd"></span> connecting Vapi…';
     await vapi.start(start.assistant);
   } catch (e){
     const msg = e?.message || String(e);

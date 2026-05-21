@@ -397,19 +397,39 @@ def _finalize_call(call: CallRecord, transcript_text: str) -> dict:
 
     fields = parsed.get("fields", {}) or {}
 
+    # Merge the lead-form seed into the parsed fields. The agent often
+    # skips re-asking for what's already on the form (per the system
+    # prompt), so the transcript won't contain the customer's phone or
+    # name verbatim — but the form did. Without this merge, every
+    # outbound booking fails for "missing phone".
+    lead = get_lead(call.lead_id)
+    if lead:
+        if lead.phone and not str(fields.get("phone", "")).strip():
+            fields["phone"] = lead.phone
+        if lead.customer_name and not str(fields.get("name", "")).strip():
+            fields["name"] = lead.customer_name
+        if lead.appliance_hint and not str(fields.get("problem", "")).strip():
+            fields["problem"] = lead.appliance_hint
+
+    parsed["fields"] = fields
+
+    # Re-evaluate the booked condition with seeded fields in place.
+    from .transcript import _REQUIRED_FOR_BOOK
+    missing = [k for k in _REQUIRED_FOR_BOOK
+               if k != "fee_agreed" and not str(fields.get(k, "")).strip()]
+    fee_ok = bool(fields.get("fee_agreed", False))
+    if not missing and fee_ok and not parsed.get("escalation"):
+        parsed["booked"] = True
+
     if not parsed.get("booked"):
-        from .transcript import _REQUIRED_FOR_BOOK
-        missing = [k for k in _REQUIRED_FOR_BOOK
-                   if k != "fee_agreed" and not str(fields.get(k, "")).strip()]
-        fee = bool(fields.get("fee_agreed", False))
         return {
             "action": "not_booked",
             "fields": fields,
             "missing_required": missing,
-            "fee_agreed": fee,
+            "fee_agreed": fee_ok,
             "message": (
                 f"Parsed the call but didn't create a booking. "
-                f"Missing required: {missing or 'none'}. fee_agreed={fee}."
+                f"Missing required: {missing or 'none'}. fee_agreed={fee_ok}."
             ),
         }
 
