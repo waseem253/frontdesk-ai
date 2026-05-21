@@ -214,13 +214,12 @@ _MODEL_BASE = {
 }
 
 # Keywords boost Deepgram recognition of brand-specific terms so the
-# customer doesn't hear "Sephora Solutions" when the agent says "Safro".
-# Format: "WORD:BOOST" where higher boost = more confident match.
+# customer doesn't hear "Sephora" when the agent says "Safro".
+# Vapi requires SINGLE-WORD entries: "word" or "word:boost". No spaces.
 _STT_KEYWORDS = [
-    "Safro:5", "Safro Solutions:5", "Safro Solutions Appliance Repair:3",
+    "Safro:5",
     "Whirlpool:3", "Bosch:3", "Maytag:3", "Frigidaire:3", "Kenmore:3",
-    "GE:2", "LG:2", "Samsung:2", "Amana:3",
-    "diagnostic:3", "appliance:2",
+    "Amana:3", "diagnostic:3", "appliance:2",
 ]
 
 # Multilingual transcriber so Sofia can switch ES/EN automatically.
