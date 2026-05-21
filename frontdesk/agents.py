@@ -137,11 +137,10 @@ class Agent:
     def vapi_assistant(self, lead_context: str = "") -> dict[str, Any]:
         """Inline (transient) Vapi assistant config for /call.
 
-        Vapi accepts the assistant config inline per call — no need to
-        pre-create assistants. The full system prompt + first line +
-        voice/LLM/STT all travel together. lead_context is appended to
-        the system prompt so the assistant knows what the lead form
-        already contained.
+        Kept to fields that are known-stable in the current Vapi schema —
+        anything fancy (backchanneling, response delays, background sound)
+        is opt-in by env and only added when explicitly enabled, because a
+        single unknown field causes Vapi to eject the call entirely.
         """
         system = self.system_prompt
         if lead_context:
@@ -158,15 +157,9 @@ class Agent:
                 "have a great day", "have a wonderful day", "have a good day",
                 "take care", "talk to you soon",
             ],
-            "endCallFunctionEnabled": True,
             "recordingEnabled": True,
-            "hipaaEnabled": False,
             "maxDurationSeconds": 600,
             "silenceTimeoutSeconds": 30,
-            "responseDelaySeconds": 0.3,
-            "llmRequestDelaySeconds": 0.1,
-            "backgroundSound": "office",   # Vapi adds light office ambience
-            "backchannelingEnabled": True, # natural "mhm" / "got it" cadence
         }
 
 
@@ -205,12 +198,12 @@ _VOICE_SOFIA = {
 }
 
 # Fast, low-latency LLM — needed to hit the <2s lead-to-talk budget.
+# Kept to fields known-stable in the current Vapi schema.
 _MODEL_BASE = {
     "provider": "openai",
     "model": "gpt-4o-mini",
     "temperature": 0.55,
     "maxTokens": 250,
-    "emotionRecognitionEnabled": True,
 }
 
 # Keywords boost Deepgram recognition of brand-specific terms so the
