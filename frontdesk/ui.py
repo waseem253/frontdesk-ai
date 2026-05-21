@@ -355,6 +355,9 @@ let CURRENT_TRANSCRIPT = [];   // ["Agent: …", "Customer: …"] — sent whole
 let vapi = null;
 
 async function boot(){
+  // Free any agents left busy by a previous test on this server instance.
+  // Bookings + sheet + queue are preserved — only the agent floor is reset.
+  try { await fetch("/api/agents/reset", {method: "POST"}); } catch(e){}
   CFG = await (await fetch("/api/config")).json();
   renderBadges();
   renderAgents(CFG);
@@ -362,6 +365,7 @@ async function boot(){
   loadSheet();
   loadQueue();
   loadBookings();
+  refreshAgents();
   startPolling();
 }
 boot();

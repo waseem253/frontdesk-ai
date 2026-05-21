@@ -621,6 +621,18 @@ def demo_reset() -> dict:
     return {"ok": True}
 
 
+@app.post("/api/agents/reset")
+def agents_reset() -> dict:
+    """Free every agent without clearing bookings / queue / sheet.
+
+    Browser calls this on page load so a refresh always gives a clean
+    agent floor — useful when a previous test left an agent busy.
+    """
+    for k in agent_status_snapshot().keys():
+        set_agent_status(k, "idle")
+    return {"ok": True, "agents": agent_status_snapshot()}
+
+
 # ─── Legacy chat console (Amanda inbound, no Vapi needed) ──────────────────
 
 class StartReq(BaseModel):
