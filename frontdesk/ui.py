@@ -352,6 +352,7 @@ let CFG = null;
 let CURRENT_CALL = null;
 let CURRENT_LEAD = null;
 let CURRENT_TRANSCRIPT = [];   // ["Agent: …", "Customer: …"] — sent whole on call-end
+let LOCAL_BOOKINGS = [];       // browser cache — survives Vercel cold starts
 let vapi = null;
 
 async function boot(){
@@ -678,6 +679,11 @@ function handleFinalize(resp){
     const b = fz.booking;
     document.getElementById("liveStat").innerHTML = '✅ booking confirmed';
     addLine("system", `✓ Booking saved · Ref ${b.id} · ${b.name} · ${b.window || '(no window)'}`);
+    // Cache locally — Vercel cold starts can lose the in-memory booking
+    // before the next GET /api/bookings call lands on a fresh instance.
+    if (b && b.id && !LOCAL_BOOKINGS.find(x => x.id === b.id)){
+      LOCAL_BOOKINGS.unshift(b);
+    }
   } else if (a === "escalation"){
     document.getElementById("liveStat").innerHTML = '⚠ escalated';
     addLine("system", "⚠ " + (fz.message || "escalation"));
@@ -790,14 +796,24 @@ async function loadQueue(){
 
 // ─── BOOKINGS ────────────────────────────────────────────────────
 async function loadBookings(){
-  const j = await (await fetch("/api/bookings")).json();
-  document.getElementById("bkMeta").textContent = j.bookings.length;
+  let serverBookings = [];
+  try {
+    const j = await (await fetch("/api/bookings")).json();
+    serverBookings = j.bookings || [];
+  } catch(e){}
+  // Merge server + local cache, dedupe by id (server wins for shared fields).
+  const seen = new Set();
+  const merged = [];
+  for (const b of [...serverBookings, ...LOCAL_BOOKINGS]){
+    if (b && b.id && !seen.has(b.id)){ seen.add(b.id); merged.push(b); }
+  }
+  document.getElementById("bkMeta").textContent = merged.length;
   const c = document.getElementById("bookings");
-  if (!j.bookings.length){
+  if (!merged.length){
     c.innerHTML = '<div class="muted" style="font-size:12px">No bookings yet.</div>';
     return;
   }
-  c.innerHTML = j.bookings.map(b => `
+  c.innerHTML = merged.map(b => `
     <div class="bk">
       <div class="row">
         <span class="pill ${b.channel === "inbound" ? "in" : "out"}">${b.channel || b.agent}</span>
@@ -820,6 +836,7 @@ function startPolling(){
 async function resetDemo(){
   await api("/api/demo/reset", {});
   CURRENT_LEAD = null; CURRENT_CALL = null;
+  CURRENT_TRANSCRIPT = []; LOCAL_BOOKINGS = [];
   document.getElementById("routerBody").innerHTML =
     '<div class="lead-feed-empty">Click any lead above to fire a webhook into the dispatcher.</div>';
   document.getElementById("routerMeta").textContent = "awaiting first lead…";
