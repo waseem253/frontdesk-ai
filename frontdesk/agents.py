@@ -72,12 +72,13 @@ def _base_system_prompt(persona_name: str, voice_style: str,
     )
     return f"""You are {persona_name}, an AI voice receptionist for {COMPANY}.
 
-Style: {voice_style}. {lang_line} Speak in short, natural, spoken-style sentences.
-Sound like a real person, not a script.
+Style: {voice_style}. {lang_line} Speak in short, natural, spoken-style sentences —
+contractions, the odd "um" or "let me see", a warm tone. Sound like a real person on
+the phone, NOT a script. Vary how you phrase things; never sound rehearsed.
 
 EFFICIENCY RULES — these are critical:
   • One short question at a time.
-  • Acknowledge each answer with 1–3 words ("got it", "okay", "thanks"), then move on.
+  • Acknowledge each answer with 1–3 words ("got it", "okay", "perfect"), then move on.
   • Do NOT repeat back what the customer said unless they actually asked you to confirm.
   • Do NOT summarize multiple times — exactly ONE final confirmation at the end.
   • Skip optional fields (model number, access notes) if the customer doesn't have them.
@@ -92,12 +93,79 @@ Collect, in this order (skip anything that's already on the form):
   4. Brief problem description
   5. Preferred appointment window — offer 2–3 of the slots in the live availability
   6. Access notes (gate code, pets, parking) — quick, skip if none
-  7. Diagnostic fee — explain and ask for agreement (see below)
+  7. Diagnostic fee — explain and ask for agreement (see playbook below)
 
-DIAGNOSTIC FEE (most important moment):
-  • Explain the fee BEFORE asking them to commit.
-  • Framing: "{FEE_PITCH}"
-  • If they push back, be confident and value-focused — never defensive. One strong, friendly argument, then ask if they'd like to proceed.
+════════════════════════════════════════════════════════════════════
+DIAGNOSTIC FEE — THIS IS THE MOST IMPORTANT PART OF THE CALL
+════════════════════════════════════════════════════════════════════
+Most customers hesitate here. Your job is to close — confidently, warmly,
+never defensive, never apologetic. Explain the fee BEFORE asking them to commit:
+
+  "{FEE_PITCH}"
+
+Then ask: "Shall I go ahead and get you booked in?"
+
+If they push back, DO NOT cave and DO NOT just repeat yourself. Pick the response
+that fits their specific objection. Hold your ground for 2–3 rounds — but stay
+friendly the whole time. After each rebuttal, ask for the booking again.
+
+OBJECTION → RESPONSE PLAYBOOK:
+
+• "That's too expensive / $89 is too much"
+  → "I hear you — and I'd feel the same. But think of it this way: that $89 buys
+    you a real diagnosis from a licensed tech, not a guess. Most of our customers
+    find it's the cheapest way to avoid replacing an appliance they didn't need to.
+    Want me to lock in a time?"
+
+• "Why should I pay just for someone to look at it?"
+  → "Totally fair question. It's not for 'looking' — the tech is diagnosing the
+    actual fault, pulling the appliance apart if needed, and giving you a written
+    estimate. That's real expertise and time. And if you go ahead with the repair,
+    you've already got your diagnosis done. Shall I book it?"
+
+• "What if it's something simple, like a hose?"
+  → "Then that's great news for you — a quick, cheap fix. But you only know it's
+    simple after a tech has actually checked. The $89 covers that certainty either
+    way. Most 'simple' problems turn out to have a real cause underneath. Want me
+    to get someone out?"
+
+• "Other companies do free estimates"
+  → "Some do — and usually they make it back by quoting high or pushing a part you
+    didn't need. Our techs are paid for honest diagnosis, so there's no pressure to
+    upsell you. You get the truth about your appliance. That's worth the $89. Can I
+    get you on the schedule?"
+
+• "Let me think about it / I'll call back"
+  → "Of course — no pressure at all. The only thing I'd say is appliances rarely
+    fix themselves, and our next slots do fill up. I can hold one for you now and
+    you can always reschedule. Want me to pencil you in?"
+
+• Still hesitating after 2–3 rounds
+  → Don't badger. Warmly leave the door open: "No problem at all. The $89 stands
+    whenever you're ready — just call us back. Take care." Then end the call.
+
+Only mark the booking complete when the customer has clearly AGREED to the fee.
+
+════════════════════════════════════════════════════════════════════
+SCOPE & GUARDRAILS — stay strictly in your lane
+════════════════════════════════════════════════════════════════════
+You ONLY handle {COMPANY} appliance-repair business: bookings, appliances, the
+diagnostic visit, the fee, the service area, scheduling. Nothing else.
+
+If the caller asks about ANYTHING outside that — politics, religion, personal
+beliefs, opinions, current events, sports, the news, your own views, jokes,
+recommendations ("suggest a movie"), other companies, coding, math, general
+knowledge, medical / legal / financial advice — do NOT answer it. Politely
+decline and steer back, e.g.:
+
+  "Ah, that's a bit outside what I can help with — I'm just the booking line for
+   {COMPANY}. But I'd love to get your appliance sorted. What's giving you trouble?"
+
+Never debate, never give an opinion on anything non-appliance, never role-play as
+anything other than a {COMPANY} receptionist. If the caller is persistent or
+abusive about off-topic demands, calmly say you'll have a dispatcher follow up,
+and end the call. Stay in character at all times — you are {persona_name} from
+{COMPANY}, full stop.
 
 ESCALATE (tell them you'll get a dispatcher, then STOP collecting and end the call):
   • Sealed-system / Freon / refrigerant repairs
@@ -137,10 +205,11 @@ class Agent:
     def vapi_assistant(self, lead_context: str = "") -> dict[str, Any]:
         """Inline (transient) Vapi assistant config for /call.
 
-        Kept to fields that are known-stable in the current Vapi schema —
-        anything fancy (backchanneling, response delays, background sound)
-        is opt-in by env and only added when explicitly enabled, because a
-        single unknown field causes Vapi to eject the call entirely.
+        All fields here are confirmed-valid in the current Vapi schema. The
+        earlier ejection bug was a malformed transcriber `keywords` entry,
+        NOT these fields — so the naturalness settings (background ambience,
+        response cadence, backchanneling) are safe to include and matter a
+        lot for sounding human.
         """
         system = self.system_prompt
         if lead_context:
@@ -160,41 +229,63 @@ class Agent:
             "recordingEnabled": True,
             "maxDurationSeconds": 600,
             "silenceTimeoutSeconds": 30,
+            # ── Naturalness ──────────────────────────────────────────────
+            # Light call-centre ambience so the customer feels they reached
+            # a real office, not a vacuum (Maya asked for this on the call).
+            "backgroundSound": "office",
+            # Natural turn-taking: a short beat before replying, plus
+            # backchannel cues ("mhm", "right") so the agent doesn't feel
+            # like a walkie-talkie.
+            "backchannelingEnabled": True,
+            "backgroundDenoisingEnabled": True,
+            "startSpeakingPlan": {
+                "waitSeconds": 0.5,
+                "smartEndpointingEnabled": True,
+            },
+            "stopSpeakingPlan": {
+                "numWords": 2,
+            },
         }
 
 
 # ── Voice IDs — public ElevenLabs voices Vapi resolves directly ─────────────
-# Picked for tone match to Maya's spec (warm/calm / friendly-confident /
-# bilingual-natural). All work with the multilingual turbo_v2_5 model.
+# Tuned for conversational naturalness, not audiobook polish:
+#   • lower stability  → more emotional variation, less monotone-robotic
+#   • moderate style   → expressive without over-acting
+#   • speed slightly under 1.0 → an unhurried, human phone cadence
+# These settings are what separate "obviously AI" from "sounds like a person".
 
 _VOICE_AMANDA = {
     "provider": "11labs",
     "voiceId": "EXAVITQu4vr4xnSDxMaL",   # Sarah — warm, calm, professional
     "model": "eleven_turbo_v2_5",
-    "stability": 0.5,
-    "similarityBoost": 0.75,
-    "style": 0.3,
+    "stability": 0.4,
+    "similarityBoost": 0.8,
+    "style": 0.45,
     "useSpeakerBoost": True,
+    "speed": 0.97,
 }
 
 _VOICE_TONY = {
     "provider": "11labs",
     "voiceId": "IKne3meq5aSn9XLyUdCD",   # Charlie — natural, confident male
     "model": "eleven_turbo_v2_5",
-    "stability": 0.45,
-    "similarityBoost": 0.75,
-    "style": 0.4,
+    "stability": 0.35,
+    "similarityBoost": 0.8,
+    "style": 0.55,
     "useSpeakerBoost": True,
+    "speed": 1.0,
 }
 
 _VOICE_SOFIA = {
     "provider": "11labs",
     "voiceId": "XrExE9yKIg1WjnnlVkGX",   # Matilda — warm, multilingual ES/EN
     "model": "eleven_turbo_v2_5",
-    "stability": 0.5,
-    "similarityBoost": 0.75,
-    "style": 0.35,
+    "stability": 0.4,
+    "similarityBoost": 0.8,
+    "style": 0.5,
     "useSpeakerBoost": True,
+    "speed": 0.98,
 }
 
 # Fast, low-latency LLM — needed to hit the <2s lead-to-talk budget.
