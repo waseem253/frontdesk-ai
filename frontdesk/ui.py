@@ -251,6 +251,58 @@ a{color:var(--blue);text-decoration:none}
 .timestamp{color:var(--mut);font-size:11px;font-variant-numeric:tabular-nums}
 .muted{color:var(--mut)}
 .right{margin-left:auto}
+
+/* ── STATS STRIP ────────────────────────────────────────────────── */
+.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px}
+@media (max-width:880px){.stats{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:520px){.stats{grid-template-columns:repeat(2,1fr)}}
+.stat{background:linear-gradient(135deg,#101a2c,#0c1424);border:1px solid var(--line);
+  border-radius:12px;padding:12px 14px}
+.stat .v{font-size:21px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+.stat .l{font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;margin-top:3px}
+.stat.hero{border-color:#235e4a;background:linear-gradient(135deg,#0e2a22,#0c1f1a)}
+.stat.hero .v{color:var(--green)}
+.stat .v.flash{animation:statflash .8s ease-out}
+@keyframes statflash{0%{color:var(--teal);transform:scale(1.12)}100%{transform:scale(1)}}
+
+/* ── SPEED RACE ─────────────────────────────────────────────────── */
+.race{background:#0a1322;border:1px solid var(--line);border-radius:10px;
+  padding:12px 14px;margin-bottom:12px}
+.race h4{font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;color:#bcc8de;
+  margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.race h4 .x{margin-left:auto;color:var(--green);font-weight:800;font-size:14px;
+  letter-spacing:0;text-transform:none}
+.race-row{display:grid;grid-template-columns:130px 1fr 64px;gap:10px;align-items:center;
+  margin-bottom:8px;font-size:11.5px}
+.race-row:last-child{margin-bottom:0}
+.race-row .who{color:var(--mut)}
+.race-row.ai .who{color:var(--green)}
+.race-track{background:#0a1626;border:1px solid var(--line);height:14px;border-radius:7px;overflow:hidden}
+.race-fill{height:100%;width:0;border-radius:7px}
+.race-row.human .race-fill{background:linear-gradient(90deg,#7a5413,#e25555)}
+.race-row.ai .race-fill{background:linear-gradient(90deg,#22d3a5,#5ba8ff)}
+.race-row .t{font-variant-numeric:tabular-nums;font-weight:700;text-align:right}
+.race-row.human .t{color:var(--amber)}
+.race-row.ai .t{color:var(--green)}
+
+/* ── LIVE CAPTURE ───────────────────────────────────────────────── */
+.capture{border-top:1px solid var(--line);background:#0b1320;padding:10px 14px}
+.capture h4{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--mut);
+  margin-bottom:8px}
+.cap-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 14px}
+@media (max-width:560px){.cap-grid{grid-template-columns:1fr}}
+.cap{display:flex;align-items:center;gap:7px;font-size:11.5px;padding:2px 0}
+.cap .dot{width:14px;height:14px;border-radius:50%;flex:none;
+  background:#1a2333;border:1.5px solid var(--mut2)}
+.cap.on .dot{background:var(--green);border-color:var(--green);position:relative}
+.cap.on .dot::after{content:"✓";position:absolute;inset:0;display:flex;
+  align-items:center;justify-content:center;font-size:9px;color:#04121a;font-weight:800}
+.cap .k{color:var(--mut);min-width:74px;flex:none}
+.cap.on .k{color:#bcc8de}
+.cap .v{color:var(--ink);font-weight:600;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.cap.flash{animation:capflash 1s ease-out}
+@keyframes capflash{0%{background:#1fb88822}100%{background:transparent}}
 </style>
 </head>
 <body>
@@ -272,6 +324,16 @@ a{color:var(--blue);text-decoration:none}
   <a class="tab" href="/console">🎙 Conversation Engine</a>
   <span style="flex:1"></span>
   <button class="tab" onclick="resetDemo()" style="background:#2a1414;border-color:#5b2a2a;color:#ffb8b8">↻ Reset demo</button>
+</div>
+
+<!-- STATS STRIP -->
+<div class="stats" id="stats">
+  <div class="stat hero"><div class="v" id="st-speed">—</div><div class="l">Avg lead → call</div></div>
+  <div class="stat"><div class="v" id="st-leads">0</div><div class="l">Leads handled</div></div>
+  <div class="stat"><div class="v" id="st-calls">0</div><div class="l">Calls placed</div></div>
+  <div class="stat"><div class="v" id="st-bookings">0</div><div class="l">Bookings</div></div>
+  <div class="stat"><div class="v" id="st-conv">0%</div><div class="l">Conversion</div></div>
+  <div class="stat"><div class="v" id="st-fees">$0</div><div class="l">Fees secured</div></div>
 </div>
 
 <!-- AGENT FLOOR -->
@@ -312,6 +374,10 @@ a{color:var(--blue);text-decoration:none}
       </div>
       <div class="transcript" id="transcript">
         <div class="tline empty">Transcript will stream here as the call progresses.</div>
+      </div>
+      <div class="capture" id="capture">
+        <h4>📋 Live capture — fields the AI is collecting</h4>
+        <div class="cap-grid" id="capGrid"></div>
       </div>
     </div>
   </div>
@@ -363,13 +429,34 @@ async function boot(){
   renderBadges();
   renderAgents(CFG);
   renderLeadButtons();
+  renderCaptureGrid();
   loadSheet();
   loadQueue();
   loadBookings();
+  loadStats();
   refreshAgents();
   startPolling();
 }
 boot();
+
+// ─── STATS STRIP ─────────────────────────────────────────────────
+async function loadStats(){
+  try {
+    const s = await (await fetch("/api/stats")).json();
+    setStat("st-speed", (s.calls_placed ? s.avg_routing_s + "s" : "—"));
+    setStat("st-leads", s.leads);
+    setStat("st-calls", s.calls_placed);
+    setStat("st-bookings", s.bookings);
+    setStat("st-conv", s.conversion_pct + "%");
+    setStat("st-fees", "$" + s.fees_secured);
+  } catch(e){}
+}
+function setStat(id, val){
+  const el = document.getElementById(id);
+  if (!el || String(el.textContent) === String(val)) return;
+  el.textContent = val;
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+}
 
 function renderBadges(){
   const b = document.getElementById("badges");
@@ -459,7 +546,7 @@ async function fireLead(key){
     CURRENT_CALL = start;
     await startVapiCall(start);
   }
-  await Promise.all([refreshAgents(), loadSheet(), loadQueue()]);
+  await Promise.all([refreshAgents(), loadSheet(), loadQueue(), loadStats()]);
   document.querySelectorAll("#leads .scn").forEach(b => b.disabled = false);
 }
 
@@ -540,6 +627,50 @@ async function animateDecision(r){
         <div class="why">${escapeHtml(m.why)}</div>
       </div>
     </div>`;
+
+  // Speed race — only when we actually placed a call.
+  if (d.action === "call"){
+    renderRace(out, d.total_ms);
+  }
+}
+
+// ─── SPEED RACE ──────────────────────────────────────────────────
+function renderRace(host, aiMs){
+  const HUMAN_MS = 60000;                       // ~60s for a human dispatcher
+  aiMs = Math.max(aiMs || 0, 1);
+  const factor = Math.round(HUMAN_MS / aiMs);
+  const el = document.createElement("div");
+  el.className = "race";
+  el.innerHTML = `
+    <h4>⚡ Speed vs a human dispatcher <span class="x">${factor}× faster</span></h4>
+    <div class="race-row human">
+      <span class="who">Human dispatcher</span>
+      <div class="race-track"><div class="race-fill" id="raceHuman"></div></div>
+      <span class="t" id="raceHumanT">0s</span>
+    </div>
+    <div class="race-row ai">
+      <span class="who">Safro AI</span>
+      <div class="race-track"><div class="race-fill" id="raceAI"></div></div>
+      <span class="t">${(aiMs/1000).toFixed(2)}s ✓</span>
+    </div>`;
+  host.appendChild(el);
+
+  // AI bar snaps in instantly (it's a sliver); human bar crawls up,
+  // counter ticking 0→60s over ~2.6s so the gap really lands.
+  const aiFill = document.getElementById("raceAI");
+  aiFill.style.transition = "width .45s ease-out";
+  requestAnimationFrame(() => {
+    aiFill.style.width = Math.max(2, (aiMs / HUMAN_MS) * 100) + "%";
+  });
+  const humanFill = document.getElementById("raceHuman");
+  const humanT = document.getElementById("raceHumanT");
+  const animMs = 2600, start = performance.now();
+  (function tick(now){
+    const p = Math.min(1, (now - start) / animMs);
+    humanFill.style.width = (p * 100) + "%";
+    humanT.textContent = Math.round(p * 60) + "s";
+    if (p < 1) requestAnimationFrame(tick);
+  })(performance.now());
 }
 
 // ─── VAPI WEB CALL ───────────────────────────────────────────────
@@ -554,6 +685,8 @@ async function startVapiCall(start){
   const tr = document.getElementById("transcript");
   tr.innerHTML = "";
   CURRENT_TRANSCRIPT = [];
+  resetCapture();
+  if (CURRENT_LEAD) prefillCapture(CURRENT_LEAD.lead);
 
   if (!start.vapi_configured || !start.public_key){
     addLine("system",
@@ -633,7 +766,7 @@ function wireVapi(){
     const fullTranscript = CURRENT_TRANSCRIPT.join("\n");
     postEvent({kind:"ended", outcome:"answered", transcript: fullTranscript}).then(j => {
       handleFinalize(j);
-      loadBookings(); refreshAgents(); loadSheet();
+      loadBookings(); refreshAgents(); loadSheet(); loadStats();
     });
   }
   vapi.on("call-start", (e) => {
@@ -653,6 +786,7 @@ function wireVapi(){
       const speaker = role === "bot" ? (CURRENT_CALL?.agent?.name || "Agent") : "Customer";
       addLine(role, msg.transcript, speaker);
       CURRENT_TRANSCRIPT.push(`${speaker}: ${msg.transcript}`);
+      detectFields(msg.transcript, role);
       postEvent({kind:"transcript", role: msg.role, text: msg.transcript});
     }
   });
@@ -723,7 +857,7 @@ function endCallManual(){
     const fullTranscript = CURRENT_TRANSCRIPT.join("\n");
     postEvent({kind:"ended", outcome:"answered", transcript: fullTranscript}).then(j => {
       handleFinalize(j);
-      loadBookings(); refreshAgents(); loadSheet();
+      loadBookings(); refreshAgents(); loadSheet(); loadStats();
     });
   }
 }
@@ -732,6 +866,8 @@ function testRespond(){
   const v = prompt("Type what the customer says (used when no mic / Vapi disabled):", "");
   if (!v) return;
   addLine("you", v, "Customer");
+  CURRENT_TRANSCRIPT.push("Customer: " + v);
+  detectFields(v, "you");
   postEvent({kind:"transcript", role:"user", text:v});
 }
 
@@ -830,6 +966,7 @@ function startPolling(){
   setInterval(() => {
     refreshAgents();
     loadQueue();
+    loadStats();
   }, 3000);
 }
 
@@ -853,6 +990,75 @@ async function api(path, body){
   return r.json();
 }
 function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+// ─── LIVE CAPTURE — fields light up as the AI collects them ───────
+// name/phone/problem are prefilled from the lead form (known up front);
+// the rest are detected heuristically from the live transcript. The
+// authoritative extraction still runs server-side at end-of-call.
+const CAP_LABELS = {
+  name:"Name", phone:"Phone", address:"Address", appliance:"Appliance",
+  brand:"Brand", model:"Model", problem:"Problem", window:"Window",
+  access:"Access", fee_agreed:"Fee OK",
+};
+let CAP_STATE = {};
+let FEE_MENTIONED = false;
+
+function renderCaptureGrid(){
+  const g = document.getElementById("capGrid");
+  if (!g) return;
+  g.innerHTML = "";
+  Object.keys(CAP_LABELS).forEach(k => {
+    const e = document.createElement("div");
+    e.className = "cap"; e.id = "cap-" + k;
+    e.innerHTML = `<span class="dot"></span><span class="k">${CAP_LABELS[k]}</span><span class="v"></span>`;
+    g.appendChild(e);
+  });
+}
+function resetCapture(){ CAP_STATE = {}; FEE_MENTIONED = false; renderCaptureGrid(); }
+function markCaptured(key, value){
+  if (CAP_STATE[key]) return;            // first detection wins
+  CAP_STATE[key] = value || true;
+  const el = document.getElementById("cap-" + key);
+  if (!el) return;
+  el.classList.add("on", "flash");
+  if (value){
+    const v = el.querySelector(".v");
+    if (v) v.textContent = String(value).slice(0, 30);
+  }
+  setTimeout(() => el.classList.remove("flash"), 1000);
+}
+function prefillCapture(lead){
+  if (!lead) return;
+  if (lead.name) markCaptured("name", lead.name);
+  if (lead.phone) markCaptured("phone", lead.phone);
+  if (lead.appliance_hint) markCaptured("problem", lead.appliance_hint);
+}
+function detectFields(text, role){
+  if (!text) return;
+  const t = text.toLowerCase();
+  if (role === "bot"){
+    if (/\b(89|eighty.?nine|diagnostic|\bfee\b|dollar)\b/i.test(text)) FEE_MENTIONED = true;
+    return;
+  }
+  const phone = text.match(/\+?\d[\d\s().-]{8,}\d/);
+  if (phone) markCaptured("phone", phone[0].trim());
+  const street = /\d+\s+[\w.\s]+\b(street|st|avenue|ave|road|rd|drive|dr|boulevard|blvd|lane|ln|court|ct|way|place|pl)\b/i;
+  if (/\b\d{5}\b/.test(text) || street.test(text)) markCaptured("address", text.trim());
+  const appliance = t.match(/\b(dryer|washer|washing machine|refrigerator|fridge|freezer|oven|range|stove|dishwasher|microwave|air condition\w*|a\/?c)\b/);
+  if (appliance) markCaptured("appliance", appliance[0]);
+  const brand = t.match(/\b(whirlpool|ge|samsung|lg|bosch|maytag|kenmore|frigidaire|amana|kitchenaid|electrolux)\b/);
+  if (brand) markCaptured("brand", brand[0].toUpperCase());
+  const model = text.match(/\b[A-Z]{2,}[A-Z0-9]*\d[A-Z0-9]*\b/);
+  if (model) markCaptured("model", model[0]);
+  if (/\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening)\b/i.test(text)
+      || /\d\s?(a\.?m|p\.?m)\b/i.test(text)) markCaptured("window", text.trim());
+  if (/\b(gate|code|pet|dog|cat|parking|park|driveway|buzz|callbox|lockbox|no pets)\b/i.test(text))
+    markCaptured("access", text.trim());
+  if (/\b(not|won'?t|isn'?t|broken|leak\w*|noise|noisy|cold|warm|heat\w*|cool\w*|spin\w*|stopped|drain\w*|error|wet)\b/i.test(text))
+    markCaptured("problem", text.trim());
+  if (FEE_MENTIONED && /\b(yes|yeah|yep|sure|ok(ay)?|go ahead|book it|sounds good|that'?s fine|fair|alright|do it)\b/i.test(text))
+    markCaptured("fee_agreed", "Accepted");
+}
 
 function _resolveCtor(m){
   // Try common export shapes from CJS→ESM transforms.

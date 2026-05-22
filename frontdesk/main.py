@@ -598,6 +598,36 @@ def api_calls() -> dict:
     return {"calls": recent_calls()}
 
 
+@app.get("/api/stats")
+def api_stats() -> dict:
+    """Live session metrics for the dashboard's top strip.
+
+    All real — counted from leads fired + bookings made this session.
+    The headline number (avg lead-to-call) is the one that sells: it's
+    genuinely sub-second, versus ~60s for a human dispatcher.
+    """
+    leads = leads_snapshot(limit=500)
+    bks = bookings()
+    calls_placed = [l for l in leads if (l.get("decision") or {}).get("action") == "call"]
+    routing_times = [
+        (l.get("decision") or {}).get("total_ms", 0)
+        for l in leads if (l.get("decision") or {}).get("total_ms")
+    ]
+    avg_ms = (sum(routing_times) / len(routing_times)) if routing_times else 0
+    conv = (len(bks) / len(calls_placed) * 100) if calls_placed else 0
+    return {
+        "leads": len(leads),
+        "calls_placed": len(calls_placed),
+        "bookings": len(bks),
+        "conversion_pct": round(conv),
+        "avg_routing_ms": round(avg_ms),
+        "avg_routing_s": round(avg_ms / 1000.0, 2),
+        "fees_secured": len(bks) * DIAGNOSTIC_FEE_USD,
+        "queued": len(queue_snapshot()),
+        "escalations": len(escalations()),
+    }
+
+
 @app.get("/api/slots")
 def api_slots() -> dict:
     """Mock 'Google Sheet' panel — every slot row, with current booked/held state."""
