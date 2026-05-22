@@ -221,11 +221,10 @@ class Agent:
             "voice": self.voice,
             "transcriber": self.transcriber,
             "endCallMessage": "Have a great day, goodbye.",
-            "endCallPhrases": [
-                "goodbye", "bye", "bye now", "see you then", "see you tomorrow",
-                "have a great day", "have a wonderful day", "have a good day",
-                "take care", "talk to you soon",
-            ],
+            # ONLY "goodbye" — looser phrases ("take care", "have a good
+            # day", "bye") can appear mid-conversation and end the call
+            # prematurely. The system prompt enforces ending on "goodbye".
+            "endCallPhrases": ["goodbye"],
             "recordingEnabled": True,
             "maxDurationSeconds": 600,
             "silenceTimeoutSeconds": 30,
