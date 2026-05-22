@@ -115,8 +115,24 @@ def reset_demo() -> None:
 BUSINESS_OPEN_HOUR = 7    # 7:00 AM Pacific
 BUSINESS_CLOSE_HOUR = 19  # 7:00 PM Pacific
 
+try:
+    from zoneinfo import ZoneInfo
+    PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+except Exception:           # zoneinfo or tz data unavailable — fall back to UTC-7
+    PACIFIC_TZ = dt.timezone(dt.timedelta(hours=-7))
+
+
+def now_pacific() -> dt.datetime:
+    """Current wall-clock in the business's timezone (Pacific).
+
+    Vercel runs serverless functions in UTC, so a naive datetime.now()
+    is UTC — wrong for a California appliance business. Always resolve
+    against America/Los_Angeles.
+    """
+    return dt.datetime.now(PACIFIC_TZ)
+
 
 def is_within_business_hours(now: Optional[dt.datetime] = None) -> bool:
     """True if calling now is allowed. Per Maya: do NOT call outside hours."""
-    now = now or dt.datetime.now()
+    now = now or now_pacific()
     return BUSINESS_OPEN_HOUR <= now.hour < BUSINESS_CLOSE_HOUR

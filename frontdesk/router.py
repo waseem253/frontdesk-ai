@@ -24,14 +24,22 @@ honest — production swaps the mocks for real APIs at the same shape.
 from __future__ import annotations
 
 import datetime as dt
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 from .agents import AGENTS, chain_for
 from .leads import Lead
-from .slots import all_slots, free_slots, is_within_business_hours
+from .slots import all_slots, free_slots, is_within_business_hours, now_pacific
 from .store import agent_status_snapshot
+
+
+def business_hours_enabled() -> bool:
+    """The business-hours gate is on unless BUSINESS_HOURS_ENABLED is a
+    falsey value. Set BUSINESS_HOURS_ENABLED=false to call 24/7 (testing)."""
+    return os.environ.get("BUSINESS_HOURS_ENABLED", "true").strip().lower() \
+        not in ("0", "false", "no", "off")
 
 # Simulated production latencies (ms) — each step would take roughly
 # this long when wired to the real service it stands in for. Demo
@@ -141,16 +149,21 @@ def route(lead: Lead, now: Optional[dt.datetime] = None,
            True, "in coverage (≤25 mi)")
 
     # 4. Business hours — Maya: do NOT call after hours, queue instead.
-    now = now or dt.datetime.now()
-    if not is_within_business_hours(now):
+    #    Timezone is the business's own (Pacific), not the server's (UTC).
+    now = now or now_pacific()
+    if not business_hours_enabled():
+        record("hours", f"Business hours: {now.strftime('%H:%M').strip()} PT",
+               True, "check disabled (BUSINESS_HOURS_ENABLED=false) — calling 24/7")
+    elif not is_within_business_hours(now):
         next_open = _next_open(now)
         record("hours", f"Business hours: {now.strftime('%H:%M').strip()} PT",
                False, f"after hours — queued for {next_open.strftime('%a %H:%M')}")
         return _decide("queue", "outside business hours",
                        chain=[], steps=steps, t0=t0,
                        queue_until=next_open.timestamp())
-    record("hours", f"Business hours: {now.strftime('%H:%M').strip()} PT",
-           True, "within 7 AM – 7 PM window")
+    else:
+        record("hours", f"Business hours: {now.strftime('%H:%M').strip()} PT",
+               True, "within 7 AM – 7 PM Pacific")
 
     # 5. Phone presence — without a number we can't dial.
     if not lead.phone:

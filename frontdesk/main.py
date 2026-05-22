@@ -37,7 +37,7 @@ from .scheduler import (
     record_attempt,
     schedule_retry,
 )
-from .slots import all_slots, book as book_slot, free_slots
+from .slots import all_slots, book as book_slot, free_slots, now_pacific
 from .store import (
     CallRecord,
     LeadRecord,
@@ -81,6 +81,7 @@ DEMO_PHONE = "+1 (747) 900-2649"
 
 @app.get("/health")
 def health() -> dict:
+    from .router import business_hours_enabled
     return {
         "ok": True,
         "company": COMPANY,
@@ -90,6 +91,8 @@ def health() -> dict:
         "telegram_live": bool(os.environ.get("TELEGRAM_BOT_TOKEN")),
         "llm_live": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "vapi_live": vapi_configured(),
+        "business_hours_gate": business_hours_enabled(),
+        "server_time_pacific": now_pacific().strftime("%Y-%m-%d %H:%M %Z"),
     }
 
 
@@ -136,7 +139,6 @@ class LeadSimReq(BaseModel):
 
 @app.post("/api/leads/simulate")
 def leads_simulate(r: LeadSimReq) -> dict:
-    import datetime as _dt
     sample = sample_by_key(r.key)
     if not sample:
         return JSONResponse({"error": "unknown sample lead"}, status_code=404)
@@ -158,12 +160,11 @@ def leads_simulate(r: LeadSimReq) -> dict:
     #    so the overflow chain (Tony busy → Sofia) is visible on a single click.
     forced_now = None
     if "force_hour" in sample:
-        now = _dt.datetime.now().replace(
+        forced_now = now_pacific().replace(
             hour=sample["force_hour"],
             minute=sample.get("force_minute", 0),
             second=0, microsecond=0,
         )
-        forced_now = now
 
     for agent_key in sample.get("force_busy", []):
         set_agent_status(agent_key, "busy",
