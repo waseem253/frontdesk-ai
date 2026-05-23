@@ -1,0 +1,46 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+ @page{size:Letter;margin:0}*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+ html,body{font-family:'Inter',system-ui,sans-serif;color:#0a0a0a;background:#fff;-webkit-font-smoothing:antialiased;font-size:10.5pt;line-height:1.5;letter-spacing:-.005em}
+ body{width:8.5in;min-height:11in;padding:.48in .6in}
+ .hero{display:flex;align-items:center;gap:14px;padding-bottom:16px;border-bottom:2px solid #0a0a0a;margin-bottom:20px}
+ .logo{width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,#14b8a6,#0f766e);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;flex-shrink:0}
+ .ht{flex:1}.ht h1{font-size:21pt;font-weight:800;letter-spacing:-.03em;line-height:1.05}
+ .ht .s{font-size:10.5pt;color:#525252;font-weight:500;margin-top:3px}
+ .hm{text-align:right;font-size:8.5pt;color:#0f766e;font-family:'JetBrains Mono',monospace;font-weight:600}
+ h2{font-size:13pt;font-weight:700;letter-spacing:-.02em;margin:12px 0 6px}h2:first-of-type{margin-top:4px}
+ p{margin-bottom:6px;color:#404040}p strong{color:#0a0a0a;font-weight:600}
+ .arch{background:#fafafa;border:1px solid #e7e5e4;border-radius:8px;padding:13px 16px;font-family:'JetBrains Mono',monospace;font-size:8.3pt;line-height:1.5;color:#404040;white-space:pre;margin:5px 0 9px}
+ .arch .v{color:#0f766e;font-weight:600}
+ .pills{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+ .pill{padding:3px 8px;border-radius:6px;background:#ccfbf1;border:1px solid #99f6e4;color:#0f766e;font-family:'JetBrains Mono',monospace;font-size:8.5pt;font-weight:500}
+ .callout{background:#ccfbf1;border-left:3px solid #14b8a6;padding:8px 12px;border-radius:0 6px 6px 0;margin:7px 0 9px;font-size:9.5pt;color:#134e4a}
+ footer{margin-top:14px;padding-top:11px;border-top:1px solid #e7e5e4;display:flex;justify-content:space-between;font-size:9pt;color:#737373}
+ footer .n{color:#0a0a0a;font-weight:600}
+</style></head><body>
+ <div class="hero"><span class="logo">FD</span><div class="ht"><h1>FrontDesk-AI &mdash; Multi-Agent Lead-to-Call Dispatcher</h1><div class="s">Yelp / Thumbtack lead &rarr; gates &rarr; first idle AI voice agent &rarr; Vapi calls in under 2 seconds</div></div><div class="hm">multi-agent<br>voice routing</div></div>
+
+ <h2>The problem</h2>
+ <p>Service businesses running on Yelp and Thumbtack lose leads in seconds &mdash; the first vendor to call back wins. A staffed reception that can answer every inbound lead in under two seconds across multiple voice agents, only ringing when the area, hours, slot and TCPA checks pass, is the right shape &mdash; but it has to be both <strong>real-time and reliable</strong>.</p>
+
+ <h2>The build</h2>
+ <p>A FastAPI service with two surfaces: an <strong>ops dashboard</strong> (live lead feed, sub-2-second router visualisation, three-agent floor with availability pills, mock Sheet of technician slots, Vapi web-call panel), and an inbound chat console for offline scrub of the booking flow. The dispatcher runs every gate (TCPA, service area, business hours, phone present, slot available, agent rotation) and hands the call to the <strong>first idle</strong> AI agent (Tony, Sofia or Amanda). Vapi places the call; Claude parses the transcript into the ten booking fields after the call completes.</p>
+
+ <h2>Architecture</h2>
+ <div class="arch">Yelp / Thumbtack webhook
+   &rarr; <span class="v">POST /api/leads/webhook</span> &rarr; dispatcher gates (TCPA &middot; area &middot; hours &middot; slot &middot; rotation)
+         &rarr; <span class="v">first idle agent</span> in the chain (Tony &middot; Sofia &middot; Amanda)
+               &rarr; <span class="v">Vapi</span> places call (ElevenLabs voice &middot; gpt-4o-mini &middot; Deepgram nova-2)
+   &rarr; <span class="v">Claude</span> extracts the 10 booking fields from the transcript
+         &rarr; Google Sheet write &middot; real Telegram alert &middot; retry ladder (20 min &middot; 24 h &middot; 72 h)
+         &rarr; out-of-hours queue fires at 7:00 AM next day</div>
+ <p>Every gate runs with realistic wall-clock latencies (Sheets ~240 ms, geocode ~65 ms) so the demo behaves like production. Telegram alerts and the Vapi call are <strong>real</strong>; the Sheet and SMS are visual mocks that swap to live with a single config change.</p>
+
+ <div class="callout"><strong>Why it matters:</strong> sub-2-second time-to-call is the difference between winning and losing the lead; a three-agent rotation prevents one slow caller from stalling the queue; the retry ladder and out-of-hours queue convert leads the business would otherwise miss.</div>
+
+ <h2>Stack</h2>
+ <div class="pills"><span class="pill">Python</span><span class="pill">FastAPI</span><span class="pill">Vapi</span><span class="pill">ElevenLabs</span><span class="pill">OpenAI</span><span class="pill">Deepgram</span><span class="pill">Claude</span><span class="pill">Telegram</span><span class="pill">Vercel</span></div>
+
+ <footer><div><span class="n">Waseem Iftikhar</span> &middot; AI / Backend Engineer</div><div>Portfolio case study</div></footer>
+</body></html>
